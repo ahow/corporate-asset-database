@@ -1,13 +1,13 @@
 # Corporate Asset Database API
 
 ## Overview
-A production-ready system that discovers, geolocates, and values physical assets for global corporations. Built with Node.js + Express + React + PostgreSQL on Replit, designed for deployment to Heroku via GitHub sync. Features AI-powered company discovery using OpenAI (via Replit AI Integrations).
+A production-ready system that discovers, geolocates, and values physical assets for global corporations. Built with Node.js + Express + React + PostgreSQL on Replit, designed for deployment to Heroku via GitHub sync. Features AI-powered company discovery with multi-LLM support and cost tracking.
 
 ## Current State
 - **15+ companies** seeded across multiple sectors (Technology, Energy, Industrials, etc.)
 - **85+ physical assets** with coordinates, valuations, and metadata
 - **100% geocoding coverage** on seed data
-- **AI Discovery** - Enter company names, AI researches and finds their physical assets
+- **Multi-LLM AI Discovery** - Toggle between 5 AI providers (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with real-time cost and token tracking
 - PostgreSQL database for persistence
 - REST API with Express backend
 - React + shadcn/ui frontend dashboard
@@ -16,7 +16,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **Frontend:** React + Vite + shadcn/ui + Tailwind CSS + Recharts
 - **Backend:** Express.js with REST API routes
 - **Database:** PostgreSQL via Drizzle ORM
-- **AI:** OpenAI via Replit AI Integrations (gpt-5-mini for discovery)
+- **AI Providers:** OpenAI (Replit AI Integrations), DeepSeek, Google Gemini, Claude (Anthropic), MiniMax
 - **Schema:** `shared/schema.ts` defines companies, assets, discovery_jobs tables
 
 ## Key Files
@@ -24,10 +24,11 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `server/routes.ts` - API endpoints including discovery SSE endpoint
 - `server/storage.ts` - Database storage layer (DatabaseStorage class)
 - `server/discovery.ts` - AI-powered company asset discovery logic
+- `server/llm-providers.ts` - Multi-LLM provider abstraction (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with cost tracking
 - `server/db.ts` - Database connection (with SSL for production/Heroku)
 - `server/seed.ts` - Seed data with 15 companies and 85 assets
 - `client/src/pages/dashboard.tsx` - Main dashboard page
-- `client/src/pages/discover.tsx` - AI discovery page with progress tracking
+- `client/src/pages/discover.tsx` - AI discovery page with model selector, progress tracking, and cost display
 - `client/src/App.tsx` - Router with / and /discover routes
 - `client/src/components/` - UI components (stats-cards, asset-table, company-selector, sector-chart, company-detail, theme-provider, theme-toggle)
 
@@ -38,10 +39,18 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/assets/company/:name` - Assets by company name
 - `GET /api/assets/isin/:isin` - Assets by ISIN code
 - `GET /api/assets/export/csv` - CSV export
-- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] })
-- `GET /api/discover/jobs` - Discovery job history
+- `GET /api/llm-providers` - Available LLM providers with costs
+- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[], provider: string })
+- `GET /api/discover/jobs` - Discovery job history with model/cost tracking
 - `GET /api/discover/jobs/:id` - Single discovery job details
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies
+
+## LLM Providers
+- **OpenAI** (gpt-5-mini) - via Replit AI Integrations, env: AI_INTEGRATIONS_OPENAI_API_KEY
+- **DeepSeek** (deepseek-chat) - OpenAI-compatible API, env: DEEPSEEK_API_KEY
+- **Google Gemini** (gemini-2.0-flash) - OpenAI-compatible API, env: GEMINI_API_KEY
+- **Claude** (claude-sonnet-4) - Anthropic SDK, env: CLAUDE_API_KEY
+- **MiniMax** (MiniMax-M2.5) - Native REST API, env: MINIMAX_API_KEY
 
 ## Development
 - Run: `npm run dev`

@@ -1,11 +1,6 @@
-import OpenAI from "openai";
 import { storage } from "./storage";
 import type { InsertCompany, InsertAsset } from "@shared/schema";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callLLM, type LLMResponse } from "./llm-providers";
 
 interface DiscoveredAsset {
   facility_name: string;
@@ -29,6 +24,11 @@ interface DiscoveredCompany {
   isin: string;
   sector: string;
   assets: DiscoveredAsset[];
+}
+
+export interface DiscoveryResult {
+  company: DiscoveredCompany;
+  llmResponse: LLMResponse;
 }
 
 const DISCOVERY_PROMPT = `You are an expert corporate analyst specializing in physical asset discovery for large corporations. Given a company name, research and identify their major physical assets (headquarters, offices, manufacturing plants, data centers, warehouses, retail locations, research facilities, refineries, power plants, etc.).
@@ -62,18 +62,11 @@ Respond with valid JSON only. The response must be a JSON object with the follow
   "assets": [...]
 }`;
 
-export async function discoverCompany(companyName: string): Promise<DiscoveredCompany> {
-  const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
-    messages: [
-      { role: "system", content: DISCOVERY_PROMPT },
-      { role: "user", content: `Discover and analyze the physical assets of: ${companyName}` },
-    ],
-    response_format: { type: "json_object" },
-    max_completion_tokens: 8192,
-  });
+export async function discoverCompany(companyName: string, providerId: string = "openai"): Promise<DiscoveryResult> {
+  const userPrompt = `Discover and analyze the physical assets of: ${companyName}`;
+  const llmResponse = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt);
 
-  const content = response.choices[0]?.message?.content;
+  const content = llmResponse.content;
   if (!content) {
     throw new Error(`No response from AI for company: ${companyName}`);
   }
@@ -83,10 +76,10 @@ export async function discoverCompany(companyName: string): Promise<DiscoveredCo
     throw new Error(`Invalid response structure for company: ${companyName}`);
   }
 
-  return parsed;
+  return { company: parsed, llmResponse };
 }
 
-export async function saveDiscoveredCompany(discovered: DiscoveredCompany): Promise<{ company: any; assetCount: number }> {
+export async function saveDiscoveredCompany(discovered: DiscoveredCompany, providerId: string): Promise<{ company: any; assetCount: number }> {
   const totalValue = discovered.assets.reduce((sum, a) => sum + (a.value_usd || 0), 0);
 
   const companyData: InsertCompany = {
@@ -100,6 +93,12 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany): Prom
   const company = await storage.upsertCompany(companyData);
 
   await storage.deleteAssetsByCompany(discovered.name);
+
+  const providerLabel = providerId === "openai" ? "GPT" :
+    providerId === "deepseek" ? "DeepSeek" :
+    providerId === "gemini" ? "Gemini" :
+    providerId === "claude" ? "Claude" :
+    providerId === "minimax" ? "MiniMax" : providerId;
 
   const assetInserts: InsertAsset[] = discovered.assets.map((a) => ({
     companyName: discovered.name,
@@ -119,7 +118,7 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany): Prom
     industryFactor: a.industry_factor,
     valuationConfidence: a.valuation_confidence,
     sector: discovered.sector,
-    dataSource: "AI Discovery (GPT)",
+    dataSource: `AI Discovery (${providerLabel})`,
   }));
 
   await storage.bulkCreateAssets(assetInserts);

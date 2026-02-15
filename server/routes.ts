@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
 import { discoverCompany, saveDiscoveredCompany } from "./discovery";
+import { getAvailableProviders } from "./llm-providers";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -223,9 +224,13 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/llm-providers", (_req, res) => {
+    res.json(getAvailableProviders());
+  });
+
   app.post("/api/discover", async (req, res) => {
     try {
-      const { companies: companyNames } = req.body;
+      const { companies: companyNames, provider: providerId = "openai" } = req.body;
       if (!companyNames || !Array.isArray(companyNames) || companyNames.length === 0) {
         return res.status(400).json({ message: "Provide an array of company names" });
       }
@@ -237,11 +242,15 @@ export async function registerRoutes(
 
       const job = await storage.createDiscoveryJob({
         status: "running",
+        modelProvider: providerId,
         totalCompanies: names.length,
         completedCompanies: 0,
         failedCompanies: 0,
         companyNames: JSON.stringify(names),
         results: null,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCostUsd: 0,
       });
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -251,21 +260,45 @@ export async function registerRoutes(
       let clientDisconnected = false;
       req.on("close", () => { clientDisconnected = true; });
 
-      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: names.length })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: names.length, provider: providerId })}\n\n`);
 
-      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string }> = [];
+      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number }> = [];
       let completed = 0;
       let failed = 0;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalCostUsd = 0;
 
       for (const name of names) {
         if (clientDisconnected) break;
         res.write(`data: ${JSON.stringify({ type: "processing", company: name, index: completed + failed })}\n\n`);
         try {
-          const discovered = await discoverCompany(name);
-          const saved = await saveDiscoveredCompany(discovered);
+          const result = await discoverCompany(name, providerId);
+          const saved = await saveDiscoveredCompany(result.company, providerId);
           completed++;
-          results.push({ name: discovered.name, status: "success", assetsFound: saved.assetCount });
-          res.write(`data: ${JSON.stringify({ type: "completed", company: discovered.name, assetsFound: saved.assetCount, completed, failed, total: names.length })}\n\n`);
+          totalInputTokens += result.llmResponse.inputTokens;
+          totalOutputTokens += result.llmResponse.outputTokens;
+          totalCostUsd += result.llmResponse.costUsd;
+          results.push({
+            name: result.company.name,
+            status: "success",
+            assetsFound: saved.assetCount,
+            inputTokens: result.llmResponse.inputTokens,
+            outputTokens: result.llmResponse.outputTokens,
+            costUsd: result.llmResponse.costUsd,
+          });
+          res.write(`data: ${JSON.stringify({
+            type: "completed",
+            company: result.company.name,
+            assetsFound: saved.assetCount,
+            completed,
+            failed,
+            total: names.length,
+            inputTokens: result.llmResponse.inputTokens,
+            outputTokens: result.llmResponse.outputTokens,
+            costUsd: result.llmResponse.costUsd,
+            totalCostUsd,
+          })}\n\n`);
         } catch (err) {
           failed++;
           const errorMsg = err instanceof Error ? err.message : "Unknown error";
@@ -277,6 +310,9 @@ export async function registerRoutes(
           completedCompanies: completed,
           failedCompanies: failed,
           results: JSON.stringify(results),
+          totalInputTokens,
+          totalOutputTokens,
+          totalCostUsd,
         });
       }
 
@@ -285,9 +321,12 @@ export async function registerRoutes(
         completedCompanies: completed,
         failedCompanies: failed,
         results: JSON.stringify(results),
+        totalInputTokens,
+        totalOutputTokens,
+        totalCostUsd,
       });
 
-      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: names.length, results })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: names.length, results, totalCostUsd, totalInputTokens, totalOutputTokens })}\n\n`);
       res.end();
     } catch (err) {
       console.error("Error in discovery:", err);

@@ -37,11 +37,15 @@ export const assets = pgTable("assets", {
 export const discoveryJobs = pgTable("discovery_jobs", {
   id: serial("id").primaryKey(),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
+  modelProvider: varchar("model_provider", { length: 50 }).default("openai"),
   totalCompanies: integer("total_companies").notNull().default(0),
   completedCompanies: integer("completed_companies").notNull().default(0),
   failedCompanies: integer("failed_companies").notNull().default(0),
   companyNames: text("company_names").notNull(),
   results: text("results"),
+  totalInputTokens: integer("total_input_tokens").default(0),
+  totalOutputTokens: integer("total_output_tokens").default(0),
+  totalCostUsd: doublePrecision("total_cost_usd").default(0),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
