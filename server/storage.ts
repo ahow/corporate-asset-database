@@ -3,11 +3,14 @@ import {
   type InsertCompany,
   type Asset,
   type InsertAsset,
+  type DiscoveryJob,
+  type InsertDiscoveryJob,
   companies,
   assets,
+  discoveryJobs,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
   getCompanies(): Promise<Company[]>;
@@ -26,6 +29,7 @@ export interface IStorage {
   createAsset(asset: InsertAsset): Promise<Asset>;
   updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset | undefined>;
   deleteAsset(id: number): Promise<boolean>;
+  deleteAssetsByCompany(companyName: string): Promise<number>;
   bulkCreateAssets(assetList: InsertAsset[]): Promise<void>;
   getAssetCount(): Promise<number>;
   getStats(): Promise<{
@@ -33,6 +37,11 @@ export interface IStorage {
     assets_with_coordinates: number;
     coordinate_coverage_percent: string;
   }>;
+
+  createDiscoveryJob(job: InsertDiscoveryJob): Promise<DiscoveryJob>;
+  getDiscoveryJob(id: number): Promise<DiscoveryJob | undefined>;
+  getDiscoveryJobs(): Promise<DiscoveryJob[]>;
+  updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob>): Promise<DiscoveryJob | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -119,6 +128,11 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
+  async deleteAssetsByCompany(companyName: string): Promise<number> {
+    const result = await db.delete(assets).where(eq(assets.companyName, companyName)).returning();
+    return result.length;
+  }
+
   async bulkCreateAssets(assetList: InsertAsset[]): Promise<void> {
     if (assetList.length === 0) return;
     const batchSize = 100;
@@ -151,6 +165,25 @@ export class DatabaseStorage implements IStorage {
       coordinate_coverage_percent:
         totalCount > 0 ? ((coordCount / totalCount) * 100).toFixed(1) : "0.0",
     };
+  }
+
+  async createDiscoveryJob(job: InsertDiscoveryJob): Promise<DiscoveryJob> {
+    const [created] = await db.insert(discoveryJobs).values(job).returning();
+    return created;
+  }
+
+  async getDiscoveryJob(id: number): Promise<DiscoveryJob | undefined> {
+    const [job] = await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, id));
+    return job;
+  }
+
+  async getDiscoveryJobs(): Promise<DiscoveryJob[]> {
+    return db.select().from(discoveryJobs).orderBy(desc(discoveryJobs.createdAt));
+  }
+
+  async updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob>): Promise<DiscoveryJob | undefined> {
+    const [updated] = await db.update(discoveryJobs).set(data).where(eq(discoveryJobs.id, id)).returning();
+    return updated;
   }
 }
 

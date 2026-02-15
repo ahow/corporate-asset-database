@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
+import { discoverCompany, saveDiscoveredCompany } from "./discovery";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -219,6 +220,106 @@ export async function registerRoutes(
     } catch (err) {
       console.error("Error deleting company:", err);
       res.status(500).json({ message: "Failed to delete company" });
+    }
+  });
+
+  app.post("/api/discover", async (req, res) => {
+    try {
+      const { companies: companyNames } = req.body;
+      if (!companyNames || !Array.isArray(companyNames) || companyNames.length === 0) {
+        return res.status(400).json({ message: "Provide an array of company names" });
+      }
+
+      const names = companyNames.map((n: string) => n.trim()).filter(Boolean);
+      if (names.length === 0) {
+        return res.status(400).json({ message: "No valid company names provided" });
+      }
+
+      const job = await storage.createDiscoveryJob({
+        status: "running",
+        totalCompanies: names.length,
+        completedCompanies: 0,
+        failedCompanies: 0,
+        companyNames: JSON.stringify(names),
+        results: null,
+      });
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      let clientDisconnected = false;
+      req.on("close", () => { clientDisconnected = true; });
+
+      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: names.length })}\n\n`);
+
+      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string }> = [];
+      let completed = 0;
+      let failed = 0;
+
+      for (const name of names) {
+        if (clientDisconnected) break;
+        res.write(`data: ${JSON.stringify({ type: "processing", company: name, index: completed + failed })}\n\n`);
+        try {
+          const discovered = await discoverCompany(name);
+          const saved = await saveDiscoveredCompany(discovered);
+          completed++;
+          results.push({ name: discovered.name, status: "success", assetsFound: saved.assetCount });
+          res.write(`data: ${JSON.stringify({ type: "completed", company: discovered.name, assetsFound: saved.assetCount, completed, failed, total: names.length })}\n\n`);
+        } catch (err) {
+          failed++;
+          const errorMsg = err instanceof Error ? err.message : "Unknown error";
+          results.push({ name, status: "failed", error: errorMsg });
+          res.write(`data: ${JSON.stringify({ type: "error", company: name, error: errorMsg, completed, failed, total: names.length })}\n\n`);
+        }
+
+        await storage.updateDiscoveryJob(job.id, {
+          completedCompanies: completed,
+          failedCompanies: failed,
+          results: JSON.stringify(results),
+        });
+      }
+
+      await storage.updateDiscoveryJob(job.id, {
+        status: "complete",
+        completedCompanies: completed,
+        failedCompanies: failed,
+        results: JSON.stringify(results),
+      });
+
+      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: names.length, results })}\n\n`);
+      res.end();
+    } catch (err) {
+      console.error("Error in discovery:", err);
+      if (res.headersSent) {
+        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: "Discovery process failed" })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ message: "Discovery failed" });
+      }
+    }
+  });
+
+  app.get("/api/discover/jobs", async (_req, res) => {
+    try {
+      const jobs = await storage.getDiscoveryJobs();
+      res.json(jobs);
+    } catch (err) {
+      console.error("Error fetching discovery jobs:", err);
+      res.status(500).json({ message: "Failed to fetch discovery jobs" });
+    }
+  });
+
+  app.get("/api/discover/jobs/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid job ID" });
+      const job = await storage.getDiscoveryJob(id);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      res.json(job);
+    } catch (err) {
+      console.error("Error fetching discovery job:", err);
+      res.status(500).json({ message: "Failed to fetch discovery job" });
     }
   });
 

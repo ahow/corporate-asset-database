@@ -34,10 +34,26 @@ export const assets = pgTable("assets", {
   dataSource: text("data_source"),
 });
 
+export const discoveryJobs = pgTable("discovery_jobs", {
+  id: serial("id").primaryKey(),
+  status: varchar("status", { length: 50 }).notNull().default("pending"),
+  totalCompanies: integer("total_companies").notNull().default(0),
+  completedCompanies: integer("completed_companies").notNull().default(0),
+  failedCompanies: integer("failed_companies").notNull().default(0),
+  companyNames: text("company_names").notNull(),
+  results: text("results"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const insertCompanySchema = createInsertSchema(companies).omit({ id: true });
 export const insertAssetSchema = createInsertSchema(assets).omit({ id: true });
+export const insertDiscoveryJobSchema = createInsertSchema(discoveryJobs).omit({ id: true, createdAt: true });
 
 export type InsertCompany = z.infer<typeof insertCompanySchema>;
 export type Company = typeof companies.$inferSelect;
 export type InsertAsset = z.infer<typeof insertAssetSchema>;
 export type Asset = typeof assets.$inferSelect;
+export type DiscoveryJob = typeof discoveryJobs.$inferSelect;
+export type InsertDiscoveryJob = z.infer<typeof insertDiscoveryJobSchema>;
+
+export * from "./models/chat";
