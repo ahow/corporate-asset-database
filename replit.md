@@ -20,16 +20,18 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **Schema:** `shared/schema.ts` defines companies, assets, discovery_jobs tables
 
 ## Key Files
-- `shared/schema.ts` - Database schema (companies, assets, discoveryJobs tables)
+- `shared/schema.ts` - Database schema (companies, assets with ownership_share, discoveryJobs tables)
 - `server/routes.ts` - API endpoints including discovery SSE endpoint
 - `server/storage.ts` - Database storage layer (DatabaseStorage class)
-- `server/discovery.ts` - AI-powered company asset discovery logic
+- `server/discovery.ts` - AI-powered company asset discovery logic (includes ownership_share)
 - `server/llm-providers.ts` - Multi-LLM provider abstraction (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with cost tracking
 - `server/db.ts` - Database connection (with SSL for production/Heroku)
 - `server/seed.ts` - Seed data with 15 companies and 85 assets
 - `client/src/pages/dashboard.tsx` - Main dashboard page
 - `client/src/pages/discover.tsx` - AI discovery page with model selector, progress tracking, and cost display
-- `client/src/App.tsx` - Router with / and /discover routes
+- `client/src/pages/methodology.tsx` - Methodology page explaining data discovery, valuation, and ownership
+- `client/src/App.tsx` - Router with /, /discover, and /methodology routes
+- `client/src/components/company-detail.tsx` - Company detail with Leaflet map, asset detail cards, and facilities table
 - `client/src/components/` - UI components (stats-cards, asset-table, company-selector, sector-chart, company-detail, theme-provider, theme-toggle)
 
 ## API Endpoints

@@ -17,6 +17,7 @@ interface DiscoveredAsset {
   type_weight: number;
   industry_factor: number;
   valuation_confidence: number;
+  ownership_share: number;
 }
 
 interface DiscoveredCompany {
@@ -53,6 +54,7 @@ For each asset, provide:
 - type_weight: 0.5-1.5 asset type importance weight
 - industry_factor: 0.5-1.5 industry-specific multiplier
 - valuation_confidence: 1-100 confidence in valuation estimate
+- ownership_share: Percentage of the asset owned by the company (0-100). Use 100 for wholly-owned assets. For joint ventures, partnerships, or partial ownership, use the company's actual ownership percentage. The value_usd should reflect only the company's share.
 
 Respond with valid JSON only. The response must be a JSON object with the following structure:
 {
@@ -117,6 +119,7 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany, provi
     typeWeight: a.type_weight,
     industryFactor: a.industry_factor,
     valuationConfidence: a.valuation_confidence,
+    ownershipShare: a.ownership_share ?? 100,
     sector: discovered.sector,
     dataSource: `AI Discovery (${providerLabel})`,
   }));

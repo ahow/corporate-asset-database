@@ -136,6 +136,9 @@ export function AssetTable({ assets, isLoading, showCompany = false }: AssetTabl
                   Value <SortIcon field="valueUsd" />
                 </button>
               </TableHead>
+              <TableHead>
+                <span className="text-xs font-medium">Coordinates</span>
+              </TableHead>
               <TableHead className="text-center">
                 <span className="text-xs font-medium">Precision</span>
               </TableHead>
@@ -171,6 +174,11 @@ export function AssetTable({ assets, isLoading, showCompany = false }: AssetTabl
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm tabular-nums" data-testid={`text-value-${asset.id}`}>
                     {formatCurrency(asset.valueUsd)}
+                  </TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground whitespace-nowrap" data-testid={`text-coords-${asset.id}`}>
+                    {asset.latitude != null && asset.longitude != null
+                      ? `${asset.latitude.toFixed(4)}, ${asset.longitude.toFixed(4)}`
+                      : "—"}
                   </TableCell>
                   <TableCell className="text-center">
                     {asset.latitude && asset.longitude ? (

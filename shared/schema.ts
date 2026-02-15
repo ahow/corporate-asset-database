@@ -30,6 +30,7 @@ export const assets = pgTable("assets", {
   typeWeight: doublePrecision("type_weight"),
   industryFactor: doublePrecision("industry_factor"),
   valuationConfidence: integer("valuation_confidence"),
+  ownershipShare: doublePrecision("ownership_share").default(100),
   sector: varchar("sector", { length: 100 }),
   dataSource: text("data_source"),
 });

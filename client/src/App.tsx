@@ -7,12 +7,14 @@ import { ThemeProvider } from "@/components/theme-provider";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Discover from "@/pages/discover";
+import Methodology from "@/pages/methodology";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/discover" component={Discover} />
+      <Route path="/methodology" component={Methodology} />
       <Route component={NotFound} />
     </Switch>
   );

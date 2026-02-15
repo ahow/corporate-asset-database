@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Download, Search, Database, BarChart3, Building2, Table2, Sparkles } from "lucide-react";
+import { Download, Search, Database, BarChart3, Building2, Table2, Sparkles, BookOpen } from "lucide-react";
 import type { Asset, Company } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -110,7 +110,13 @@ export default function Dashboard() {
               <Link href="/discover">
                 <Button variant="outline" size="sm" data-testid="button-discover">
                   <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-                  Discover Companies
+                  Discover
+                </Button>
+              </Link>
+              <Link href="/methodology">
+                <Button variant="outline" size="sm" data-testid="button-methodology">
+                  <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+                  Methodology
                 </Button>
               </Link>
               <Button variant="outline" size="sm" onClick={handleExportCSV} data-testid="button-export-csv">
