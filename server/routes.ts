@@ -232,20 +232,29 @@ export async function registerRoutes(
 
   app.post("/api/discover", async (req, res) => {
     try {
-      const { companies: companyNames, provider: providerId = "openai" } = req.body;
-      if (!companyNames || !Array.isArray(companyNames) || companyNames.length === 0) {
-        return res.status(400).json({ message: "Provide an array of company names" });
+      const { companies: companyEntries, provider: providerId = "openai" } = req.body;
+      if (!companyEntries || !Array.isArray(companyEntries) || companyEntries.length === 0) {
+        return res.status(400).json({ message: "Provide an array of companies" });
       }
 
-      const names = companyNames.map((n: string) => n.trim()).filter(Boolean);
-      if (names.length === 0) {
-        return res.status(400).json({ message: "No valid company names provided" });
+      const entries: Array<{ name: string; isin?: string }> = companyEntries.map((entry: any) => {
+        if (typeof entry === "string") {
+          return { name: entry.trim() };
+        }
+        const rawIsin = (entry.isin || "").trim().toUpperCase();
+        return { name: (entry.name || "").trim(), isin: rawIsin || undefined };
+      }).filter((e: { name: string }) => e.name.length > 0);
+
+      if (entries.length === 0) {
+        return res.status(400).json({ message: "No valid company entries provided" });
       }
+
+      const names = entries.map((e) => e.name);
 
       const job = await storage.createDiscoveryJob({
         status: "running",
         modelProvider: providerId,
-        totalCompanies: names.length,
+        totalCompanies: entries.length,
         completedCompanies: 0,
         failedCompanies: 0,
         companyNames: JSON.stringify(names),
@@ -262,7 +271,7 @@ export async function registerRoutes(
       let clientDisconnected = false;
       req.on("close", () => { clientDisconnected = true; });
 
-      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: names.length, provider: providerId })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId })}\n\n`);
 
       const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number }> = [];
       let completed = 0;
@@ -271,11 +280,12 @@ export async function registerRoutes(
       let totalOutputTokens = 0;
       let totalCostUsd = 0;
 
-      for (const name of names) {
+      for (const entry of entries) {
         if (clientDisconnected) break;
-        res.write(`data: ${JSON.stringify({ type: "processing", company: name, index: completed + failed })}\n\n`);
+        const displayName = entry.isin ? `${entry.name} (${entry.isin})` : entry.name;
+        res.write(`data: ${JSON.stringify({ type: "processing", company: displayName, index: completed + failed })}\n\n`);
         try {
-          const result = await discoverCompany(name, providerId);
+          const result = await discoverCompany(entry.name, providerId, entry.isin);
           const saved = await saveDiscoveredCompany(result.company, providerId);
           completed++;
           totalInputTokens += result.llmResponse.inputTokens;
@@ -295,7 +305,7 @@ export async function registerRoutes(
             assetsFound: saved.assetCount,
             completed,
             failed,
-            total: names.length,
+            total: entries.length,
             inputTokens: result.llmResponse.inputTokens,
             outputTokens: result.llmResponse.outputTokens,
             costUsd: result.llmResponse.costUsd,
@@ -304,8 +314,8 @@ export async function registerRoutes(
         } catch (err) {
           failed++;
           const errorMsg = err instanceof Error ? err.message : "Unknown error";
-          results.push({ name, status: "failed", error: errorMsg });
-          res.write(`data: ${JSON.stringify({ type: "error", company: name, error: errorMsg, completed, failed, total: names.length })}\n\n`);
+          results.push({ name: displayName, status: "failed", error: errorMsg });
+          res.write(`data: ${JSON.stringify({ type: "error", company: displayName, error: errorMsg, completed, failed, total: entries.length })}\n\n`);
         }
 
         await storage.updateDiscoveryJob(job.id, {
@@ -328,7 +338,7 @@ export async function registerRoutes(
         totalCostUsd,
       });
 
-      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: names.length, results, totalCostUsd, totalInputTokens, totalOutputTokens })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: entries.length, results, totalCostUsd, totalInputTokens, totalOutputTokens })}\n\n`);
       res.end();
     } catch (err) {
       console.error("Error in discovery:", err);

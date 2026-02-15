@@ -64,8 +64,11 @@ Respond with valid JSON only. The response must be a JSON object with the follow
   "assets": [...]
 }`;
 
-export async function discoverCompany(companyName: string, providerId: string = "openai"): Promise<DiscoveryResult> {
-  const userPrompt = `Discover and analyze the physical assets of: ${companyName}`;
+export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string): Promise<DiscoveryResult> {
+  let userPrompt = `Discover and analyze the physical assets of: ${companyName}`;
+  if (isin) {
+    userPrompt += `\n\nIMPORTANT: This company has the ISIN code ${isin}. Use this ISIN to ensure you are researching the correct company. The ISIN must match exactly in your response.`;
+  }
   const llmResponse = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt);
 
   const content = llmResponse.content;

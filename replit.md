@@ -28,7 +28,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `server/db.ts` - Database connection (with SSL for production/Heroku)
 - `server/seed.ts` - Seed data with 15 companies and 85 assets
 - `client/src/pages/dashboard.tsx` - Main dashboard page
-- `client/src/pages/discover.tsx` - AI discovery page with model selector, progress tracking, and cost display
+- `client/src/pages/discover.tsx` - AI discovery page with CSV upload, ISIN support, model selector, progress tracking, and cost display
 - `client/src/pages/methodology.tsx` - Methodology page explaining data discovery, valuation, and ownership
 - `client/src/App.tsx` - Router with /, /discover, and /methodology routes
 - `client/src/components/company-detail.tsx` - Company detail with Leaflet map, asset detail cards, and facilities table
@@ -42,7 +42,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/assets/isin/:isin` - Assets by ISIN code
 - `GET /api/assets/export/csv` - CSV export
 - `GET /api/llm-providers` - Available LLM providers with costs
-- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[], provider: string })
+- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] | {name, isin}[], provider: string })
 - `GET /api/discover/jobs` - Discovery job history with model/cost tracking
 - `GET /api/discover/jobs/:id` - Single discovery job details
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies
