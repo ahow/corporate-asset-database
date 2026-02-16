@@ -27,8 +27,8 @@ const PROVIDERS_CONFIG: Record<string, {
   supportsJsonMode: boolean;
 }> = {
   openai: {
-    name: "OpenAI (GPT-5 Mini)",
-    model: "gpt-5-mini",
+    name: "OpenAI (GPT-4o Mini)",
+    model: "gpt-4o-mini",
     costPer1kInput: 0.00015,
     costPer1kOutput: 0.0006,
     envKey: "OPENAI_API_KEY",
@@ -121,7 +121,7 @@ async function callOpenAICompatible(
 ): Promise<LLMResponse> {
   const client = new OpenAI({ apiKey, baseURL });
 
-  const useMaxCompletionTokens = model.startsWith("gpt-5") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
+  const useMaxCompletionTokens = model.startsWith("gpt-5") || model.startsWith("gpt-4o") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
   const requestParams: any = {
     model,
     messages: [

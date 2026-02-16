@@ -235,6 +235,29 @@ export async function registerRoutes(
     res.json({ available: isSerperAvailable() });
   });
 
+  app.get("/api/health/providers", async (_req, res) => {
+    const providers = getAvailableProviders();
+    const results: Record<string, { available: boolean; keySet: boolean; keyPreview?: string }> = {};
+    for (const p of providers) {
+      const keyName = p.id === "openai" ? "OPENAI_API_KEY / AI_INTEGRATIONS_OPENAI_API_KEY"
+        : p.id === "deepseek" ? "DEEPSEEK_API_KEY"
+        : p.id === "gemini" ? "GEMINI_API_KEY"
+        : p.id === "claude" ? "CLAUDE_API_KEY"
+        : p.id === "minimax" ? "MINIMAX_API_KEY" : "unknown";
+      results[p.id] = {
+        available: p.available,
+        keySet: p.available,
+        keyPreview: p.available ? `${keyName} = ...${("set").slice(-3)}` : `${keyName} = not set`,
+      };
+    }
+    res.json({
+      providers: results,
+      serperAvailable: isSerperAvailable(),
+      nodeEnv: process.env.NODE_ENV || "not set",
+      databaseConnected: true,
+    });
+  });
+
   app.post("/api/discover", async (req, res) => {
     let keepAlive: ReturnType<typeof setInterval> | null = null;
     try {
@@ -362,12 +385,13 @@ export async function registerRoutes(
       res.end();
     } catch (err) {
       if (keepAlive) clearInterval(keepAlive);
-      console.error("Error in discovery:", err);
+      const errorDetail = err instanceof Error ? err.message : String(err);
+      console.error("Error in discovery:", errorDetail, err);
       if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: "Discovery process failed" })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: errorDetail })}\n\n`);
         res.end();
       } else {
-        res.status(500).json({ message: "Discovery failed" });
+        res.status(500).json({ message: `Discovery failed: ${errorDetail}` });
       }
     }
   });

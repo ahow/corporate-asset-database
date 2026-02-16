@@ -52,7 +52,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies
 
 ## LLM Providers
-- **OpenAI** (gpt-5-mini) - env: OPENAI_API_KEY (falls back to AI_INTEGRATIONS_OPENAI_API_KEY on Replit)
+- **OpenAI** (gpt-4o-mini) - env: OPENAI_API_KEY (falls back to AI_INTEGRATIONS_OPENAI_API_KEY on Replit)
 - **DeepSeek** (deepseek-chat) - OpenAI-compatible API, env: DEEPSEEK_API_KEY
 - **Google Gemini** (gemini-2.0-flash) - OpenAI-compatible API, env: GEMINI_API_KEY
 - **Claude** (claude-sonnet-4) - Anthropic SDK, env: CLAUDE_API_KEY
