@@ -379,6 +379,13 @@ export default function Discover() {
                   description: `Processed ${event.total} companies: ${event.completed} succeeded, ${event.failed} failed. Cost: ${formatCost(event.totalCostUsd || 0)}`,
                 });
                 break;
+              case "fatal_error":
+                toast({
+                  title: "Discovery failed",
+                  description: event.error || "An unexpected error occurred during discovery.",
+                  variant: "destructive",
+                });
+                break;
             }
           } catch {
           }
@@ -386,7 +393,15 @@ export default function Discover() {
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        toast({ title: "Discovery failed", description: (err as Error).message || "An error occurred during discovery.", variant: "destructive" });
+        const errMsg = (err as Error).message || "";
+        const isNetworkError = errMsg.includes("Failed to fetch") || errMsg.includes("network") || errMsg.includes("TypeError");
+        toast({
+          title: "Discovery failed",
+          description: isNetworkError
+            ? "Connection lost. The server may have timed out. Try discovering fewer companies at a time (10-20)."
+            : errMsg || "An error occurred during discovery.",
+          variant: "destructive",
+        });
       }
     } finally {
       setIsRunning(false);

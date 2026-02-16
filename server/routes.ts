@@ -236,6 +236,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/discover", async (req, res) => {
+    let keepAlive: ReturnType<typeof setInterval> | null = null;
     try {
       const { companies: companyEntries, provider: providerId = "openai" } = req.body;
       if (!companyEntries || !Array.isArray(companyEntries) || companyEntries.length === 0) {
@@ -273,13 +274,20 @@ export async function registerRoutes(
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
 
       let clientDisconnected = false;
       req.on("close", () => { clientDisconnected = true; });
 
+      keepAlive = setInterval(() => {
+        if (!clientDisconnected) {
+          res.write(`: keep-alive\n\n`);
+        }
+      }, 15000);
+
       res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId })}\n\n`);
 
-      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number; normalized?: boolean }> = [];
+      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number; normalized?: boolean; webResearchUsed?: boolean }> = [];
       let completed = 0;
       let failed = 0;
       let totalInputTokens = 0;
@@ -349,9 +357,11 @@ export async function registerRoutes(
         totalCostUsd,
       });
 
+      clearInterval(keepAlive);
       res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: entries.length, results, totalCostUsd, totalInputTokens, totalOutputTokens })}\n\n`);
       res.end();
     } catch (err) {
+      if (keepAlive) clearInterval(keepAlive);
       console.error("Error in discovery:", err);
       if (res.headersSent) {
         res.write(`data: ${JSON.stringify({ type: "fatal_error", error: "Discovery process failed" })}\n\n`);
