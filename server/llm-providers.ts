@@ -102,13 +102,14 @@ async function callOpenAICompatible(
 ): Promise<LLMResponse> {
   const client = new OpenAI({ apiKey, baseURL });
 
+  const useMaxCompletionTokens = model.startsWith("gpt-5") || model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
   const requestParams: any = {
     model,
     messages: [
       { role: "system", content: systemPrompt + (supportsJsonMode ? "" : "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no code fences, just raw JSON.") },
       { role: "user", content: userPrompt },
     ],
-    max_tokens: 8192,
+    ...(useMaxCompletionTokens ? { max_completion_tokens: 8192 } : { max_tokens: 8192 }),
   };
 
   if (supportsJsonMode) {
