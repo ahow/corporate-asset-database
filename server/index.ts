@@ -60,6 +60,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  const { ensureTables } = await import("./db");
+  await ensureTables();
+
   const { seedDatabase } = await import("./seed");
   try {
     await seedDatabase();
