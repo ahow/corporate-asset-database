@@ -38,6 +38,7 @@ interface LLMProvider {
 interface CompanyEntry {
   name: string;
   isin?: string;
+  totalValue?: number;
 }
 
 interface DiscoveryResult {
@@ -48,6 +49,7 @@ interface DiscoveryResult {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  normalized?: boolean;
 }
 
 interface DiscoveryEvent {
@@ -67,6 +69,7 @@ interface DiscoveryEvent {
   totalCostUsd?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  normalized?: boolean;
 }
 
 interface DiscoveryJob {
@@ -131,6 +134,21 @@ function isIsin(value: string): boolean {
   return ISIN_RE.test(value.toUpperCase());
 }
 
+function parseTotalValue(raw: string): number | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw.replace(/[$€£¥,\s]/g, "").trim();
+  if (!cleaned) return undefined;
+  let multiplier = 1;
+  let numStr = cleaned;
+  const lastChar = cleaned.slice(-1).toUpperCase();
+  if (lastChar === "B") { multiplier = 1e9; numStr = cleaned.slice(0, -1); }
+  else if (lastChar === "M") { multiplier = 1e6; numStr = cleaned.slice(0, -1); }
+  else if (lastChar === "K") { multiplier = 1e3; numStr = cleaned.slice(0, -1); }
+  const val = parseFloat(numStr);
+  if (isNaN(val) || val <= 0) return undefined;
+  return val * multiplier;
+}
+
 function parseCompanyEntries(input: string): CompanyEntry[] {
   const results: CompanyEntry[] = [];
   const lines = input.split(/\n/).map((l) => l.trim()).filter((l) => l.length > 0);
@@ -143,8 +161,16 @@ function parseCompanyEntries(input: string): CompanyEntry[] {
       const first = parts[0]?.trim();
       const second = parts[1]?.trim();
       if (first && second && isIsin(second.toUpperCase())) {
-        results.push({ name: first, isin: second.toUpperCase() });
+        const totalValue = parts.length >= 3 ? parseTotalValue(parts[2]) : undefined;
+        results.push({ name: first, isin: second.toUpperCase(), totalValue });
         continue;
+      }
+      if (parts.length >= 2 && first) {
+        const maybeVal = parseTotalValue(second);
+        if (maybeVal) {
+          results.push({ name: first, totalValue: maybeVal });
+          continue;
+        }
       }
     }
 
@@ -187,6 +213,7 @@ export default function Discover() {
   const entries = companyInput.trim() ? parseCompanyEntries(companyInput) : [];
   const companyCount = entries.length;
   const isinCount = entries.filter((e) => e.isin).length;
+  const valueCount = entries.filter((e) => e.totalValue).length;
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -216,24 +243,33 @@ export default function Discover() {
       const headerFields = parseDelimitedLine(lines[0], fileDelimiter);
       let nameIdx = 0;
       let isinIdx = 1;
+      let valueIdx = -1;
 
       if (hasHeader) {
         const lowerFields = headerFields.map((f) => f.toLowerCase().replace(/[^a-z]/g, ""));
         const foundName = lowerFields.findIndex((f) => f.includes("company") || f === "name" || f.includes("companyname"));
         const foundIsin = lowerFields.findIndex((f) => f.includes("isin") || f.includes("identifier"));
+        const foundValue = lowerFields.findIndex((f) => f.includes("totalvalue") || f.includes("totalasset") || f.includes("assetvalue") || f === "value" || f.includes("bookvalue") || f.includes("ppne") || f.includes("ppenet"));
         if (foundName >= 0) nameIdx = foundName;
         if (foundIsin >= 0) isinIdx = foundIsin;
+        if (foundValue >= 0) valueIdx = foundValue;
       }
 
       const parsed = dataLines.map((line) => {
         const fields = parseDelimitedLine(line, fileDelimiter);
         const name = fields[nameIdx]?.trim() || "";
         const rawIsin = fields[isinIdx]?.trim().toUpperCase() || "";
+        const rawValue = valueIdx >= 0 ? fields[valueIdx]?.trim() || "" : "";
         if (!name) return "";
+        let result = name;
         if (rawIsin && isIsin(rawIsin)) {
-          return `${name}, ${rawIsin}`;
+          result += `, ${rawIsin}`;
         }
-        return name;
+        const totalVal = parseTotalValue(rawValue);
+        if (totalVal) {
+          result += `, ${totalVal}`;
+        }
+        return result;
       }).filter(Boolean);
 
       setCompanyInput(parsed.join("\n"));
@@ -312,6 +348,7 @@ export default function Discover() {
                   inputTokens: event.inputTokens,
                   outputTokens: event.outputTokens,
                   costUsd: event.costUsd,
+                  normalized: event.normalized,
                 }]);
                 setProgress({ completed: event.completed || 0, failed: event.failed || 0, total: event.total || 0 });
                 setRunCost(event.totalCostUsd || 0);
@@ -379,7 +416,7 @@ export default function Discover() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Enter companies below (one per line) or upload a CSV file. Include ISIN codes for more accurate identification. Format: <span className="font-mono text-xs">Company Name, ISIN</span>
+                Enter companies below (one per line) or upload a CSV file. Include ISIN codes for more accurate identification and total asset values for normalization. Format: <span className="font-mono text-xs">Company Name, ISIN, TotalValue</span>
               </p>
 
               <div className="space-y-2">
@@ -457,7 +494,7 @@ export default function Discover() {
                   </div>
                 </div>
                 <Textarea
-                  placeholder={"Enter companies, one per line (optionally with ISIN):\nApple Inc, US0378331005\nSamsung Electronics, KR7005930003\nNovartis\nSiemens AG, DE0007236101\nBHP Group, AU000000BHP4"}
+                  placeholder={"Enter companies, one per line (optionally with ISIN and total asset value):\nApple Inc, US0378331005, 43.7B\nSamsung Electronics, KR7005930003, 120000000000\nNovartis\nSiemens AG, DE0007236101, 25B\nBHP Group, AU000000BHP4, $32.5B"}
                   value={companyInput}
                   onChange={(e) => {
                     setCompanyInput(e.target.value);
@@ -473,6 +510,7 @@ export default function Discover() {
                 <span className="text-xs text-muted-foreground">
                   {companyCount} {companyCount === 1 ? "company" : "companies"}
                   {isinCount > 0 && ` (${isinCount} with ISIN)`}
+                  {valueCount > 0 && ` (${valueCount} with total value)`}
                 </span>
                 <Button
                   onClick={handleDiscover}
@@ -557,6 +595,9 @@ export default function Discover() {
                           <span className="text-sm font-medium truncate">{r.name}</span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          {r.status === "success" && r.normalized && (
+                            <Badge variant="outline" data-testid={`badge-normalized-${i}`}>Normalized</Badge>
+                          )}
                           {r.status === "success" && r.costUsd !== undefined && (
                             <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
                           )}

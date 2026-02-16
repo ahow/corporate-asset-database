@@ -42,7 +42,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/assets/isin/:isin` - Assets by ISIN code
 - `GET /api/assets/export/csv` - CSV export
 - `GET /api/llm-providers` - Available LLM providers with costs
-- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] | {name, isin}[], provider: string })
+- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] | {name, isin, totalValue?}[], provider: string })
 - `GET /api/discover/jobs` - Discovery job history with model/cost tracking
 - `GET /api/discover/jobs/:id` - Single discovery job details
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies

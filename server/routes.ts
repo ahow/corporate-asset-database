@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
-import { discoverCompany, saveDiscoveredCompany } from "./discovery";
+import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
 
 export async function registerRoutes(
@@ -237,12 +237,13 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Provide an array of companies" });
       }
 
-      const entries: Array<{ name: string; isin?: string }> = companyEntries.map((entry: any) => {
+      const entries: Array<{ name: string; isin?: string; totalValue?: number }> = companyEntries.map((entry: any) => {
         if (typeof entry === "string") {
           return { name: entry.trim() };
         }
         const rawIsin = (entry.isin || "").trim().toUpperCase();
-        return { name: (entry.name || "").trim(), isin: rawIsin || undefined };
+        const totalValue = typeof entry.totalValue === "number" && entry.totalValue > 0 ? entry.totalValue : undefined;
+        return { name: (entry.name || "").trim(), isin: rawIsin || undefined, totalValue };
       }).filter((e: { name: string }) => e.name.length > 0);
 
       if (entries.length === 0) {
@@ -273,7 +274,7 @@ export async function registerRoutes(
 
       res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId })}\n\n`);
 
-      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number }> = [];
+      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number; normalized?: boolean }> = [];
       let completed = 0;
       let failed = 0;
       let totalInputTokens = 0;
@@ -286,6 +287,7 @@ export async function registerRoutes(
         res.write(`data: ${JSON.stringify({ type: "processing", company: displayName, index: completed + failed })}\n\n`);
         try {
           const result = await discoverCompany(entry.name, providerId, entry.isin);
+          const normalized = normalizeAssetValues(result.company, entry.totalValue);
           const saved = await saveDiscoveredCompany(result.company, providerId);
           completed++;
           totalInputTokens += result.llmResponse.inputTokens;
@@ -298,6 +300,7 @@ export async function registerRoutes(
             inputTokens: result.llmResponse.inputTokens,
             outputTokens: result.llmResponse.outputTokens,
             costUsd: result.llmResponse.costUsd,
+            normalized,
           });
           res.write(`data: ${JSON.stringify({
             type: "completed",
@@ -310,6 +313,7 @@ export async function registerRoutes(
             outputTokens: result.llmResponse.outputTokens,
             costUsd: result.llmResponse.costUsd,
             totalCostUsd,
+            normalized,
           })}\n\n`);
         } catch (err) {
           failed++;

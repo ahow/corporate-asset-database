@@ -84,6 +84,23 @@ export async function discoverCompany(companyName: string, providerId: string = 
   return { company: parsed, llmResponse };
 }
 
+export function normalizeAssetValues(discovered: DiscoveredCompany, totalValue?: number): boolean {
+  if (!totalValue || totalValue <= 0 || !discovered.assets || discovered.assets.length === 0) {
+    return false;
+  }
+
+  const aiTotal = discovered.assets.reduce((sum, a) => sum + (a.value_usd || 0), 0);
+  if (aiTotal <= 0) return false;
+
+  const scaleFactor = totalValue / aiTotal;
+
+  for (const asset of discovered.assets) {
+    asset.value_usd = Math.round((asset.value_usd || 0) * scaleFactor);
+  }
+
+  return true;
+}
+
 export async function saveDiscoveredCompany(discovered: DiscoveredCompany, providerId: string): Promise<{ company: any; assetCount: number }> {
   const totalValue = discovered.assets.reduce((sum, a) => sum + (a.value_usd || 0), 0);
 
