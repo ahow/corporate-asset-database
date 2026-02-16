@@ -590,7 +590,7 @@ export default function Discover() {
                     Enter company names and click "Discover Assets" to begin.
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Each company takes about 10-15 seconds to research.
+                    Each company takes about 20-30 seconds (2-pass deep analysis).
                   </p>
                 </div>
               )}

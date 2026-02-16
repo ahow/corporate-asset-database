@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
-import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues } from "./discovery";
+import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type MultiPassDiscoveryResult } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
 import { isSerperAvailable } from "./serper";
 
@@ -337,16 +337,16 @@ export async function registerRoutes(
             const normalized = normalizeAssetValues(result.company, entry.totalValue);
             const saved = await saveDiscoveredCompany(result.company, providerId);
             completed++;
-            totalInputTokens += result.llmResponse.inputTokens;
-            totalOutputTokens += result.llmResponse.outputTokens;
-            totalCostUsd += result.llmResponse.costUsd;
+            totalInputTokens += result.totalInputTokens;
+            totalOutputTokens += result.totalOutputTokens;
+            totalCostUsd += result.totalCostUsd;
             results.push({
               name: result.company.name,
               status: "success",
               assetsFound: saved.assetCount,
-              inputTokens: result.llmResponse.inputTokens,
-              outputTokens: result.llmResponse.outputTokens,
-              costUsd: result.llmResponse.costUsd,
+              inputTokens: result.totalInputTokens,
+              outputTokens: result.totalOutputTokens,
+              costUsd: result.totalCostUsd,
               normalized,
               webResearchUsed: result.webResearchUsed,
             });
@@ -357,12 +357,13 @@ export async function registerRoutes(
               completed,
               failed,
               total: entries.length,
-              inputTokens: result.llmResponse.inputTokens,
-              outputTokens: result.llmResponse.outputTokens,
-              costUsd: result.llmResponse.costUsd,
+              inputTokens: result.totalInputTokens,
+              outputTokens: result.totalOutputTokens,
+              costUsd: result.totalCostUsd,
               totalCostUsd,
               normalized,
               webResearchUsed: result.webResearchUsed,
+              passCount: result.passCount,
             })}\n\n`);
             succeeded = true;
             break;

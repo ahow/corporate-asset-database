@@ -8,7 +8,8 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **85+ physical assets** with coordinates, valuations, and metadata
 - **100% geocoding coverage** on seed data
 - **Multi-LLM AI Discovery** - Toggle between 5 AI providers (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with real-time cost and token tracking
-- **Web-Enhanced Research** - Optional Serper API integration for grounding AI discovery with live Google search data
+- **Two-Pass Deep Discovery** - Pass 1 finds initial assets, Pass 2 reviews and fills gaps by category (40+ assets for major mining companies)
+- **Web-Enhanced Research** - Optional Serper API integration with sector-aware queries for grounding AI discovery with live Google search data
 - PostgreSQL database for persistence
 - REST API with Express backend
 - React + shadcn/ui frontend dashboard
@@ -25,8 +26,8 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `shared/schema.ts` - Database schema (companies, assets with ownership_share, discoveryJobs tables)
 - `server/routes.ts` - API endpoints including discovery SSE endpoint
 - `server/storage.ts` - Database storage layer (DatabaseStorage class)
-- `server/discovery.ts` - AI-powered company asset discovery logic (includes ownership_share, Serper web research integration)
-- `server/serper.ts` - Web research module using Serper API for Google search grounding (3-4 searches per company)
+- `server/discovery.ts` - Two-pass AI-powered company asset discovery logic (Pass 1: initial discovery, Pass 2: gap-filling review with deduplication)
+- `server/serper.ts` - Web research module using Serper API for Google search grounding (6-11 sector-aware searches per company, 60 snippet limit)
 - `server/llm-providers.ts` - Multi-LLM provider abstraction (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with cost tracking
 - `server/db.ts` - Database connection (with SSL for production/Heroku)
 - `server/seed.ts` - Seed data with 15 companies and 85 assets
