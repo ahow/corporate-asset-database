@@ -33,12 +33,12 @@ export interface DiscoveryResult {
   llmResponse: LLMResponse;
 }
 
-const DISCOVERY_PROMPT = `You are an expert corporate analyst specializing in physical asset discovery for large corporations. Given a company name, research and identify their major physical assets (headquarters, offices, manufacturing plants, data centers, warehouses, retail locations, research facilities, refineries, power plants, etc.).
+const DISCOVERY_PROMPT = `You are an expert corporate analyst specializing in comprehensive physical asset discovery for global corporations. Given a company name, research and identify ALL significant physical assets they own or operate worldwide. Be as thorough and complete as possible — do not limit yourself to a small number. Include every major facility you know about.
 
 For each company, provide:
 1. The company's ISIN code (International Securities Identification Number - 12 characters). If you don't know the exact ISIN, provide your best estimate using the standard format (country code + 9 alphanumeric + check digit).
-2. The company's sector (e.g., Technology, Energy, Industrials, Healthcare, Consumer Staples, Financials, etc.)
-3. A list of 4-8 major physical assets/facilities
+2. The company's sector (e.g., Technology, Energy, Industrials, Healthcare, Consumer Staples, Financials, Materials, Utilities, etc.)
+3. A comprehensive list of ALL significant physical assets/facilities. Include every known major site — headquarters, regional offices, mines, smelters, refineries, processing plants, manufacturing plants, data centers, warehouses, distribution centers, port terminals, rail yards, pipelines, power plants, solar/wind farms, research facilities, laboratories, campuses, retail stores, hotels, theme parks, shipyards, drilling platforms, LNG terminals, and any other physical infrastructure. Aim for completeness over brevity.
 
 For each asset, provide:
 - facility_name: A descriptive name for the facility
@@ -48,14 +48,14 @@ For each asset, provide:
 - latitude: Approximate latitude coordinate
 - longitude: Approximate longitude coordinate
 - coordinate_certainty: 1-100 confidence in coordinates (80+ for well-known locations)
-- asset_type: One of: Headquarters, Office, Manufacturing Plant, Data Center, Warehouse, Distribution Center, Retail Store, Research Facility, Refinery, Power Plant, Laboratory, Campus
+- asset_type: One of: Headquarters, Office, Mine, Smelter, Refinery, Processing Plant, Manufacturing Plant, Data Center, Warehouse, Distribution Center, Port Terminal, Rail Yard, Pipeline, Power Plant, Solar Farm, Wind Farm, Research Facility, Laboratory, Campus, Retail Store, Hotel, Theme Park, Shipyard, Drilling Platform, LNG Terminal, or other descriptive type
 - value_usd: Estimated value in USD (consider real estate value, equipment, strategic importance)
 - size_factor: 0.1-1.0 relative size factor
 - geo_factor: 0.5-1.5 geographic value factor (higher for prime locations)
 - type_weight: 0.5-1.5 asset type importance weight
 - industry_factor: 0.5-1.5 industry-specific multiplier
 - valuation_confidence: 1-100 confidence in valuation estimate
-- ownership_share: Percentage of the asset owned by the company (0-100). Use 100 for wholly-owned assets. For joint ventures, partnerships, or partial ownership, use the company's actual ownership percentage. The value_usd should reflect only the company's share.
+- ownership_share: Percentage of the asset owned by the company (0-100). Use 100 for wholly-owned assets. For joint ventures, partnerships, or partial ownership, use the company's actual ownership percentage. The value_usd should reflect the TOTAL asset value (not the company's share — the ownership_share field captures the percentage).
 
 Respond with valid JSON only. The response must be a JSON object with the following structure:
 {

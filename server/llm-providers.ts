@@ -25,6 +25,7 @@ const PROVIDERS_CONFIG: Record<string, {
   costPer1kOutput: number;
   envKey: string;
   supportsJsonMode: boolean;
+  maxOutputTokens: number;
 }> = {
   openai: {
     name: "OpenAI (GPT-4o Mini)",
@@ -33,6 +34,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.0006,
     envKey: "OPENAI_API_KEY",
     supportsJsonMode: true,
+    maxOutputTokens: 16384,
   },
   deepseek: {
     name: "DeepSeek (V3)",
@@ -41,6 +43,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.00042,
     envKey: "DEEPSEEK_API_KEY",
     supportsJsonMode: true,
+    maxOutputTokens: 8192,
   },
   gemini: {
     name: "Google Gemini (2.0 Flash)",
@@ -49,6 +52,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.0004,
     envKey: "GEMINI_API_KEY",
     supportsJsonMode: true,
+    maxOutputTokens: 8192,
   },
   claude: {
     name: "Claude (Sonnet 4)",
@@ -57,6 +61,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.015,
     envKey: "CLAUDE_API_KEY",
     supportsJsonMode: false,
+    maxOutputTokens: 16384,
   },
   minimax: {
     name: "MiniMax (M2.5)",
@@ -65,6 +70,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.0006,
     envKey: "MINIMAX_API_KEY",
     supportsJsonMode: false,
+    maxOutputTokens: 16384,
   },
 };
 
@@ -117,7 +123,8 @@ async function callOpenAICompatible(
   systemPrompt: string,
   userPrompt: string,
   providerId: string,
-  supportsJsonMode: boolean
+  supportsJsonMode: boolean,
+  maxOutputTokens: number
 ): Promise<LLMResponse> {
   const client = new OpenAI({ apiKey, baseURL });
 
@@ -128,7 +135,7 @@ async function callOpenAICompatible(
       { role: "system", content: systemPrompt + (supportsJsonMode ? "" : "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no code fences, just raw JSON.") },
       { role: "user", content: userPrompt },
     ],
-    ...(useMaxCompletionTokens ? { max_completion_tokens: 8192 } : { max_tokens: 8192 }),
+    ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
   };
 
   if (supportsJsonMode) {
@@ -157,12 +164,13 @@ async function callOpenAICompatible(
 async function callClaude(
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxOutputTokens: number
 ): Promise<LLMResponse> {
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: PROVIDERS_CONFIG.claude.model,
-    max_tokens: 8192,
+    max_tokens: maxOutputTokens,
     system: systemPrompt + "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no code fences, just raw JSON.",
     messages: [
       { role: "user", content: userPrompt },
@@ -188,7 +196,8 @@ async function callClaude(
 async function callMiniMax(
   apiKey: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxOutputTokens: number
 ): Promise<LLMResponse> {
   const response = await fetch("https://api.minimax.io/v1/text/chatcompletion_v2", {
     method: "POST",
@@ -202,7 +211,7 @@ async function callMiniMax(
         { role: "system", name: "assistant", content: systemPrompt + "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no code fences, just raw JSON." },
         { role: "user", name: "user", content: userPrompt },
       ],
-      max_completion_tokens: 8192,
+      max_completion_tokens: maxOutputTokens,
     }),
   });
 
@@ -256,7 +265,8 @@ export async function callLLM(
         systemPrompt,
         userPrompt,
         providerId,
-        config.supportsJsonMode
+        config.supportsJsonMode,
+        config.maxOutputTokens
       );
     case "deepseek":
       return callOpenAICompatible(
@@ -266,7 +276,8 @@ export async function callLLM(
         systemPrompt,
         userPrompt,
         providerId,
-        config.supportsJsonMode
+        config.supportsJsonMode,
+        config.maxOutputTokens
       );
     case "gemini":
       return callOpenAICompatible(
@@ -276,12 +287,13 @@ export async function callLLM(
         systemPrompt,
         userPrompt,
         providerId,
-        config.supportsJsonMode
+        config.supportsJsonMode,
+        config.maxOutputTokens
       );
     case "claude":
-      return callClaude(apiKey, systemPrompt, userPrompt);
+      return callClaude(apiKey, systemPrompt, userPrompt, config.maxOutputTokens);
     case "minimax":
-      return callMiniMax(apiKey, systemPrompt, userPrompt);
+      return callMiniMax(apiKey, systemPrompt, userPrompt, config.maxOutputTokens);
     default:
       throw new Error(`Provider ${providerId} not implemented`);
   }
