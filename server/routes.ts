@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
 import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
+import { isSerperAvailable } from "./serper";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -230,6 +231,10 @@ export async function registerRoutes(
     res.json(getAvailableProviders());
   });
 
+  app.get("/api/serper/status", (_req, res) => {
+    res.json({ available: isSerperAvailable() });
+  });
+
   app.post("/api/discover", async (req, res) => {
     try {
       const { companies: companyEntries, provider: providerId = "openai" } = req.body;
@@ -301,6 +306,7 @@ export async function registerRoutes(
             outputTokens: result.llmResponse.outputTokens,
             costUsd: result.llmResponse.costUsd,
             normalized,
+            webResearchUsed: result.webResearchUsed,
           });
           res.write(`data: ${JSON.stringify({
             type: "completed",
@@ -314,6 +320,7 @@ export async function registerRoutes(
             costUsd: result.llmResponse.costUsd,
             totalCostUsd,
             normalized,
+            webResearchUsed: result.webResearchUsed,
           })}\n\n`);
         } catch (err) {
           failed++;

@@ -8,6 +8,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **85+ physical assets** with coordinates, valuations, and metadata
 - **100% geocoding coverage** on seed data
 - **Multi-LLM AI Discovery** - Toggle between 5 AI providers (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with real-time cost and token tracking
+- **Web-Enhanced Research** - Optional Serper API integration for grounding AI discovery with live Google search data
 - PostgreSQL database for persistence
 - REST API with Express backend
 - React + shadcn/ui frontend dashboard
@@ -17,13 +18,15 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **Backend:** Express.js with REST API routes
 - **Database:** PostgreSQL via Drizzle ORM
 - **AI Providers:** OpenAI (Replit AI Integrations), DeepSeek, Google Gemini, Claude (Anthropic), MiniMax
+- **Web Research:** Serper API for Google search grounding (optional, falls back gracefully)
 - **Schema:** `shared/schema.ts` defines companies, assets, discovery_jobs tables
 
 ## Key Files
 - `shared/schema.ts` - Database schema (companies, assets with ownership_share, discoveryJobs tables)
 - `server/routes.ts` - API endpoints including discovery SSE endpoint
 - `server/storage.ts` - Database storage layer (DatabaseStorage class)
-- `server/discovery.ts` - AI-powered company asset discovery logic (includes ownership_share)
+- `server/discovery.ts` - AI-powered company asset discovery logic (includes ownership_share, Serper web research integration)
+- `server/serper.ts` - Web research module using Serper API for Google search grounding (3-4 searches per company)
 - `server/llm-providers.ts` - Multi-LLM provider abstraction (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with cost tracking
 - `server/db.ts` - Database connection (with SSL for production/Heroku)
 - `server/seed.ts` - Seed data with 15 companies and 85 assets
@@ -42,6 +45,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/assets/isin/:isin` - Assets by ISIN code
 - `GET /api/assets/export/csv` - CSV export
 - `GET /api/llm-providers` - Available LLM providers with costs
+- `GET /api/serper/status` - Check if Serper web research is available
 - `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] | {name, isin, totalValue?}[], provider: string })
 - `GET /api/discover/jobs` - Discovery job history with model/cost tracking
 - `GET /api/discover/jobs/:id` - Single discovery job details

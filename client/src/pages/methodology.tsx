@@ -67,6 +67,12 @@ export default function Methodology() {
                 The system supports automated asset discovery using multiple large language models (LLMs). Users can choose from five AI providers (OpenAI, DeepSeek, Google Gemini, Claude, or MiniMax) to research a company and identify its major physical assets. The AI analyzes public information about each company and returns structured data about its facilities, including locations, types, and estimated values.
               </p>
             </div>
+            <div>
+              <span className="font-medium text-foreground">Web-Enhanced Research (Serper API)</span>
+              <p>
+                When the Serper API key is configured, the system performs 3-4 targeted Google searches per company before consulting the AI model. These searches cover facility locations, manufacturing plants, SEC filings, and property/plant/equipment data. The search results are fed as grounding context to the LLM, significantly improving the accuracy of facility names, addresses, coordinates, and valuations. This is optional and the system gracefully falls back to pure LLM knowledge when unavailable.
+              </p>
+            </div>
           </div>
         </Section>
 

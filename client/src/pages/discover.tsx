@@ -23,6 +23,7 @@ import {
   Upload,
   FileText,
   X,
+  Globe,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -50,6 +51,7 @@ interface DiscoveryResult {
   outputTokens?: number;
   costUsd?: number;
   normalized?: boolean;
+  webResearchUsed?: boolean;
 }
 
 interface DiscoveryEvent {
@@ -70,6 +72,7 @@ interface DiscoveryEvent {
   totalInputTokens?: number;
   totalOutputTokens?: number;
   normalized?: boolean;
+  webResearchUsed?: boolean;
 }
 
 interface DiscoveryJob {
@@ -204,6 +207,10 @@ export default function Discover() {
 
   const { data: providers } = useQuery<LLMProvider[]>({
     queryKey: ["/api/llm-providers"],
+  });
+
+  const { data: serperStatus } = useQuery<{ available: boolean }>({
+    queryKey: ["/api/serper/status"],
   });
 
   const { data: jobs } = useQuery<DiscoveryJob[]>({
@@ -350,6 +357,7 @@ export default function Discover() {
                   outputTokens: event.outputTokens,
                   costUsd: event.costUsd,
                   normalized: event.normalized,
+                  webResearchUsed: event.webResearchUsed,
                 }]);
                 setProgress({ completed: event.completed || 0, failed: event.failed || 0, total: event.total || 0 });
                 setRunCost(event.totalCostUsd || 0);
@@ -452,6 +460,26 @@ export default function Discover() {
                     Est. cost: {formatCost(currentProvider.costPer1kInputTokens)}/1k input + {formatCost(currentProvider.costPer1kOutputTokens)}/1k output tokens
                   </p>
                 )}
+              </div>
+
+              <div className="flex items-center gap-2 rounded-md border p-2">
+                <Globe className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <span className="text-xs text-muted-foreground">Web Research:</span>
+                {serperStatus?.available ? (
+                  <Badge variant="secondary" data-testid="badge-serper-active">
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Active
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" data-testid="badge-serper-inactive">
+                    Off
+                  </Badge>
+                )}
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {serperStatus?.available
+                    ? "Results grounded with live web data"
+                    : "Add SERPER_API_KEY for web-enhanced discovery"}
+                </span>
               </div>
 
               <div className="space-y-2">
@@ -596,6 +624,12 @@ export default function Discover() {
                           <span className="text-sm font-medium truncate">{r.name}</span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          {r.status === "success" && r.webResearchUsed && (
+                            <Badge variant="outline" data-testid={`badge-web-research-${i}`}>
+                              <Globe className="w-3 h-3 mr-1" />
+                              Web
+                            </Badge>
+                          )}
                           {r.status === "success" && r.normalized && (
                             <Badge variant="outline" data-testid={`badge-normalized-${i}`}>Normalized</Badge>
                           )}

@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import type { InsertCompany, InsertAsset } from "@shared/schema";
 import { callLLM, type LLMResponse } from "./llm-providers";
+import { searchCompanyAssets, isSerperAvailable } from "./serper";
 
 interface DiscoveredAsset {
   facility_name: string;
@@ -64,11 +65,30 @@ Respond with valid JSON only. The response must be a JSON object with the follow
   "assets": [...]
 }`;
 
-export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string): Promise<DiscoveryResult> {
+export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string): Promise<DiscoveryResult & { webResearchUsed: boolean }> {
+  let webContext = "";
+  let webResearchUsed = false;
+
+  if (isSerperAvailable()) {
+    try {
+      webContext = await searchCompanyAssets(companyName, isin);
+      if (webContext.length > 0) {
+        webResearchUsed = true;
+      }
+    } catch {
+      webContext = "";
+    }
+  }
+
   let userPrompt = `Discover and analyze the physical assets of: ${companyName}`;
   if (isin) {
     userPrompt += `\n\nIMPORTANT: This company has the ISIN code ${isin}. Use this ISIN to ensure you are researching the correct company. The ISIN must match exactly in your response.`;
   }
+
+  if (webContext) {
+    userPrompt += `\n\n--- WEB RESEARCH DATA ---\nThe following information was gathered from recent web searches about this company's physical assets, facilities, and financial filings. Use this data to improve accuracy of facility names, locations, coordinates, and valuations. Cross-reference with your knowledge and prioritize factual data from these sources:\n\n${webContext}\n--- END WEB RESEARCH DATA ---`;
+  }
+
   const llmResponse = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt);
 
   const content = llmResponse.content;
@@ -81,7 +101,7 @@ export async function discoverCompany(companyName: string, providerId: string = 
     throw new Error(`Invalid response structure for company: ${companyName}`);
   }
 
-  return { company: parsed, llmResponse };
+  return { company: parsed, llmResponse, webResearchUsed };
 }
 
 export function normalizeAssetValues(discovered: DiscoveredCompany, totalValue?: number): boolean {
