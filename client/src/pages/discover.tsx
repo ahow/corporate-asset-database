@@ -314,7 +314,8 @@ export default function Discover() {
       });
 
       if (!response.ok) {
-        throw new Error("Discovery request failed");
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.message || `Discovery request failed (${response.status})`);
       }
 
       const reader = response.body?.getReader();
@@ -377,7 +378,7 @@ export default function Discover() {
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        toast({ title: "Discovery failed", description: "An error occurred during discovery.", variant: "destructive" });
+        toast({ title: "Discovery failed", description: (err as Error).message || "An error occurred during discovery.", variant: "destructive" });
       }
     } finally {
       setIsRunning(false);
