@@ -68,11 +68,23 @@ const PROVIDERS_CONFIG: Record<string, {
   },
 };
 
+function isValidApiKey(key: string | undefined): boolean {
+  if (!key) return false;
+  if (key.startsWith("_DUMMY") || key === "DUMMY" || key.includes("DUMMY")) return false;
+  if (key.length < 10) return false;
+  return true;
+}
+
 function resolveApiKey(providerId: string, config: { envKey: string }): string | undefined {
   if (providerId === "openai") {
-    return process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    const primary = process.env.OPENAI_API_KEY;
+    if (isValidApiKey(primary)) return primary;
+    const fallback = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+    if (isValidApiKey(fallback)) return fallback;
+    return undefined;
   }
-  return process.env[config.envKey];
+  const key = process.env[config.envKey];
+  return isValidApiKey(key) ? key : undefined;
 }
 
 export function getAvailableProviders(): LLMProvider[] {
