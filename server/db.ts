@@ -67,6 +67,19 @@ export async function ensureTables() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
     `);
+    await client.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='assets' AND column_name='ownership_share') THEN
+          ALTER TABLE assets ADD COLUMN ownership_share DOUBLE PRECISION DEFAULT 100;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='assets' AND column_name='data_source') THEN
+          ALTER TABLE assets ADD COLUMN data_source TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='assets' AND column_name='sector') THEN
+          ALTER TABLE assets ADD COLUMN sector VARCHAR(100);
+        END IF;
+      END $$;
+    `);
     console.log("Database tables verified/created successfully");
   } catch (err) {
     console.error("Error ensuring tables:", err);
