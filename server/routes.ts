@@ -321,43 +321,62 @@ export async function registerRoutes(
         if (clientDisconnected) break;
         const displayName = entry.isin ? `${entry.name} (${entry.isin})` : entry.name;
         res.write(`data: ${JSON.stringify({ type: "processing", company: displayName, index: completed + failed })}\n\n`);
-        try {
-          const result = await discoverCompany(entry.name, providerId, entry.isin);
-          const normalized = normalizeAssetValues(result.company, entry.totalValue);
-          const saved = await saveDiscoveredCompany(result.company, providerId);
-          completed++;
-          totalInputTokens += result.llmResponse.inputTokens;
-          totalOutputTokens += result.llmResponse.outputTokens;
-          totalCostUsd += result.llmResponse.costUsd;
-          results.push({
-            name: result.company.name,
-            status: "success",
-            assetsFound: saved.assetCount,
-            inputTokens: result.llmResponse.inputTokens,
-            outputTokens: result.llmResponse.outputTokens,
-            costUsd: result.llmResponse.costUsd,
-            normalized,
-            webResearchUsed: result.webResearchUsed,
-          });
-          res.write(`data: ${JSON.stringify({
-            type: "completed",
-            company: result.company.name,
-            assetsFound: saved.assetCount,
-            completed,
-            failed,
-            total: entries.length,
-            inputTokens: result.llmResponse.inputTokens,
-            outputTokens: result.llmResponse.outputTokens,
-            costUsd: result.llmResponse.costUsd,
-            totalCostUsd,
-            normalized,
-            webResearchUsed: result.webResearchUsed,
-          })}\n\n`);
-        } catch (err) {
+
+        let lastError = "";
+        let succeeded = false;
+        const maxRetries = 2;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            if (attempt > 0) {
+              const delay = attempt * 3000;
+              console.log(`Retrying ${displayName} (attempt ${attempt + 1}/${maxRetries + 1}) after ${delay}ms`);
+              await new Promise(r => setTimeout(r, delay));
+            }
+            const result = await discoverCompany(entry.name, providerId, entry.isin);
+            const normalized = normalizeAssetValues(result.company, entry.totalValue);
+            const saved = await saveDiscoveredCompany(result.company, providerId);
+            completed++;
+            totalInputTokens += result.llmResponse.inputTokens;
+            totalOutputTokens += result.llmResponse.outputTokens;
+            totalCostUsd += result.llmResponse.costUsd;
+            results.push({
+              name: result.company.name,
+              status: "success",
+              assetsFound: saved.assetCount,
+              inputTokens: result.llmResponse.inputTokens,
+              outputTokens: result.llmResponse.outputTokens,
+              costUsd: result.llmResponse.costUsd,
+              normalized,
+              webResearchUsed: result.webResearchUsed,
+            });
+            res.write(`data: ${JSON.stringify({
+              type: "completed",
+              company: result.company.name,
+              assetsFound: saved.assetCount,
+              completed,
+              failed,
+              total: entries.length,
+              inputTokens: result.llmResponse.inputTokens,
+              outputTokens: result.llmResponse.outputTokens,
+              costUsd: result.llmResponse.costUsd,
+              totalCostUsd,
+              normalized,
+              webResearchUsed: result.webResearchUsed,
+            })}\n\n`);
+            succeeded = true;
+            break;
+          } catch (err) {
+            lastError = err instanceof Error ? err.message : "Unknown error";
+            const isRetryable = lastError.includes("429") || lastError.includes("rate") || lastError.includes("timeout") || lastError.includes("ECONNRESET") || lastError.includes("500") || lastError.includes("503");
+            if (!isRetryable || attempt === maxRetries) break;
+          }
+        }
+
+        if (!succeeded) {
           failed++;
-          const errorMsg = err instanceof Error ? err.message : "Unknown error";
-          results.push({ name: displayName, status: "failed", error: errorMsg });
-          res.write(`data: ${JSON.stringify({ type: "error", company: displayName, error: errorMsg, completed, failed, total: entries.length })}\n\n`);
+          results.push({ name: displayName, status: "failed", error: lastError });
+          res.write(`data: ${JSON.stringify({ type: "error", company: displayName, error: lastError, completed, failed, total: entries.length })}\n\n`);
         }
 
         await storage.updateDiscoveryJob(job.id, {

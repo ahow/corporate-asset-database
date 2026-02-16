@@ -630,13 +630,18 @@ export default function Discover() {
                         className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
                         data-testid={`result-row-${i}`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
                           {r.status === "success" ? (
                             <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
                           ) : (
                             <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                           )}
-                          <span className="text-sm font-medium truncate">{r.name}</span>
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium truncate block">{r.name}</span>
+                            {r.status === "failed" && r.error && (
+                              <span className="text-xs text-red-500 dark:text-red-400 truncate block" data-testid={`text-error-${i}`}>{r.error}</span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           {r.status === "success" && r.webResearchUsed && (
