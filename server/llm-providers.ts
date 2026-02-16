@@ -31,7 +31,7 @@ const PROVIDERS_CONFIG: Record<string, {
     model: "gpt-5-mini",
     costPer1kInput: 0.00015,
     costPer1kOutput: 0.0006,
-    envKey: "AI_INTEGRATIONS_OPENAI_API_KEY",
+    envKey: "OPENAI_API_KEY",
     supportsJsonMode: true,
   },
   deepseek: {
@@ -68,6 +68,13 @@ const PROVIDERS_CONFIG: Record<string, {
   },
 };
 
+function resolveApiKey(providerId: string, config: { envKey: string }): string | undefined {
+  if (providerId === "openai") {
+    return process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  }
+  return process.env[config.envKey];
+}
+
 export function getAvailableProviders(): LLMProvider[] {
   return Object.entries(PROVIDERS_CONFIG).map(([id, config]) => ({
     id,
@@ -75,7 +82,7 @@ export function getAvailableProviders(): LLMProvider[] {
     model: config.model,
     costPer1kInputTokens: config.costPer1kInput,
     costPer1kOutputTokens: config.costPer1kOutput,
-    available: !!process.env[config.envKey],
+    available: !!resolveApiKey(id, config),
   }));
 }
 
@@ -223,7 +230,7 @@ export async function callLLM(
     throw new Error(`Unknown provider: ${providerId}. Valid providers: ${Object.keys(PROVIDERS_CONFIG).join(", ")}`);
   }
 
-  const apiKey = process.env[config.envKey];
+  const apiKey = resolveApiKey(providerId, config);
   if (!apiKey) {
     throw new Error(`API key not configured for ${config.name}. Set ${config.envKey} in secrets.`);
   }
