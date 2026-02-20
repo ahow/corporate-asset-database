@@ -43,7 +43,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.00042,
     envKey: "DEEPSEEK_API_KEY",
     supportsJsonMode: true,
-    maxOutputTokens: 16384,
+    maxOutputTokens: 8192,
   },
   gemini: {
     name: "Google Gemini (2.0 Flash)",
