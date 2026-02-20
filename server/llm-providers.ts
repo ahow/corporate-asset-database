@@ -43,7 +43,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.00042,
     envKey: "DEEPSEEK_API_KEY",
     supportsJsonMode: true,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 16384,
   },
   gemini: {
     name: "Google Gemini (2.0 Flash)",
@@ -52,7 +52,7 @@ const PROVIDERS_CONFIG: Record<string, {
     costPer1kOutput: 0.0004,
     envKey: "GEMINI_API_KEY",
     supportsJsonMode: true,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 16384,
   },
   claude: {
     name: "Claude (Sonnet 4)",

@@ -3,6 +3,35 @@ import type { InsertCompany, InsertAsset } from "@shared/schema";
 import { callLLM, type LLMResponse } from "./llm-providers";
 import { searchCompanyAssets, isSerperAvailable } from "./serper";
 
+function repairJSON(raw: string): string {
+  let s = raw.trim();
+  if (!s.startsWith("{") && !s.startsWith("[")) {
+    const firstBrace = s.indexOf("{");
+    if (firstBrace >= 0) s = s.slice(firstBrace);
+  }
+  const lastValidArrayClose = s.lastIndexOf("}]");
+  if (lastValidArrayClose > 0) {
+    const afterClose = s.slice(lastValidArrayClose + 2).trim();
+    if (!afterClose.startsWith("}")) {
+      s = s.slice(0, lastValidArrayClose + 2) + "}";
+    }
+  }
+  try { JSON.parse(s); return s; } catch {}
+  const lastCompleteObj = s.lastIndexOf("},");
+  if (lastCompleteObj > 0) {
+    const truncated = s.slice(0, lastCompleteObj + 1);
+    const openBrackets = (truncated.match(/\[/g) || []).length;
+    const closeBrackets = (truncated.match(/\]/g) || []).length;
+    let repaired = truncated;
+    for (let i = 0; i < openBrackets - closeBrackets; i++) repaired += "]";
+    const openBraces = (repaired.match(/\{/g) || []).length;
+    const closeBraces = (repaired.match(/\}/g) || []).length;
+    for (let i = 0; i < openBraces - closeBraces; i++) repaired += "}";
+    try { JSON.parse(repaired); return repaired; } catch {}
+  }
+  return raw;
+}
+
 interface DiscoveredAsset {
   facility_name: string;
   address: string;
@@ -156,7 +185,15 @@ export async function discoverCompany(companyName: string, providerId: string = 
     throw new Error(`No response from AI for company: ${companyName}`);
   }
 
-  const parsed = JSON.parse(content) as DiscoveredCompany;
+  let parsed: DiscoveredCompany;
+  try {
+    parsed = JSON.parse(content) as DiscoveredCompany;
+  } catch (parseErr) {
+    console.warn(`[Discovery v2] JSON parse failed for ${companyName}, attempting repair...`);
+    const repaired = repairJSON(content);
+    parsed = JSON.parse(repaired) as DiscoveredCompany;
+    console.log(`[Discovery v2] JSON repair succeeded for ${companyName}`);
+  }
   if (!parsed.name || !parsed.isin || !parsed.assets || !Array.isArray(parsed.assets)) {
     throw new Error(`Invalid response structure for company: ${companyName}`);
   }
@@ -181,7 +218,13 @@ export async function discoverCompany(companyName: string, providerId: string = 
     totalCostUsd += pass2Response.costUsd;
 
     if (pass2Response.content) {
-      const supplementary = JSON.parse(pass2Response.content);
+      let supplementary: any;
+      try {
+        supplementary = JSON.parse(pass2Response.content);
+      } catch {
+        console.warn(`[Discovery v2] Pass 2 JSON parse failed for ${companyName}, attempting repair...`);
+        supplementary = JSON.parse(repairJSON(pass2Response.content));
+      }
       const additionalAssets: DiscoveredAsset[] = supplementary.additional_assets || supplementary.assets || [];
 
       console.log(`[Discovery v2] Pass 2 returned ${additionalAssets.length} additional assets for ${companyName}`);
