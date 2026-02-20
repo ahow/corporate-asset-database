@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
-import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type MultiPassDiscoveryResult } from "./discovery";
+import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type MultiPassDiscoveryResult, type ProgressCallback } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
 import { isSerperAvailable } from "./serper";
 
@@ -258,6 +258,14 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/version", (_req, res) => {
+    res.json({
+      version: "v2-twopass",
+      features: ["two-pass-discovery", "web-research-enhanced", "progress-callbacks", "deduplication"],
+      buildTime: new Date().toISOString(),
+    });
+  });
+
   app.post("/api/discover", async (req, res) => {
     let keepAlive: ReturnType<typeof setInterval> | null = null;
     try {
@@ -306,9 +314,10 @@ export async function registerRoutes(
         if (!clientDisconnected) {
           res.write(`: keep-alive\n\n`);
         }
-      }, 15000);
+      }, 10000);
 
-      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId })}\n\n`);
+      console.log(`[Discovery v2] Starting discovery job ${job.id} for ${entries.length} companies with provider ${providerId}`);
+      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId, version: "v2-twopass" })}\n\n`);
 
       const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number; normalized?: boolean; webResearchUsed?: boolean }> = [];
       let completed = 0;
@@ -333,7 +342,12 @@ export async function registerRoutes(
               console.log(`Retrying ${displayName} (attempt ${attempt + 1}/${maxRetries + 1}) after ${delay}ms`);
               await new Promise(r => setTimeout(r, delay));
             }
-            const result = await discoverCompany(entry.name, providerId, entry.isin);
+            const progressCallback: ProgressCallback = (phase, detail) => {
+              if (!clientDisconnected) {
+                res.write(`data: ${JSON.stringify({ type: "phase", company: displayName, phase, detail })}\n\n`);
+              }
+            };
+            const result = await discoverCompany(entry.name, providerId, entry.isin, progressCallback);
             const normalized = normalizeAssetValues(result.company, entry.totalValue);
             const saved = await saveDiscoveredCompany(result.company, providerId);
             completed++;

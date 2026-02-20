@@ -73,6 +73,8 @@ interface DiscoveryEvent {
   totalOutputTokens?: number;
   normalized?: boolean;
   webResearchUsed?: boolean;
+  phase?: string;
+  detail?: string;
 }
 
 interface DiscoveryJob {
@@ -197,6 +199,7 @@ export default function Discover() {
   const [selectedProvider, setSelectedProvider] = useState("openai");
   const [isRunning, setIsRunning] = useState(false);
   const [currentCompany, setCurrentCompany] = useState("");
+  const [currentPhase, setCurrentPhase] = useState("");
   const [progress, setProgress] = useState({ completed: 0, failed: 0, total: 0 });
   const [results, setResults] = useState<DiscoveryResult[]>([]);
   const [isDone, setIsDone] = useState(false);
@@ -306,6 +309,7 @@ export default function Discover() {
     setResults([]);
     setProgress({ completed: 0, failed: 0, total: entries.length });
     setCurrentCompany("");
+    setCurrentPhase("");
     setIsDone(false);
     setRunCost(0);
 
@@ -347,6 +351,10 @@ export default function Discover() {
             switch (event.type) {
               case "processing":
                 setCurrentCompany(event.company || "");
+                setCurrentPhase("");
+                break;
+              case "phase":
+                setCurrentPhase(event.detail || event.phase || "");
                 break;
               case "completed":
                 setResults((prev) => [...prev, {
@@ -369,6 +377,7 @@ export default function Discover() {
               case "done":
                 setIsDone(true);
                 setCurrentCompany("");
+                setCurrentPhase("");
                 setRunCost(event.totalCostUsd || 0);
                 queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
                 queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
@@ -616,10 +625,17 @@ export default function Discover() {
                   </div>
 
                   {currentCompany && (
-                    <div className="flex items-center gap-2 text-sm">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-chart-1" />
-                      <span className="text-muted-foreground">Researching:</span>
-                      <span className="font-medium" data-testid="text-current-company">{currentCompany}</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-chart-1" />
+                        <span className="text-muted-foreground">Researching:</span>
+                        <span className="font-medium" data-testid="text-current-company">{currentCompany}</span>
+                      </div>
+                      {currentPhase && (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground pl-5" data-testid="text-current-phase">
+                          <span>{currentPhase}</span>
+                        </div>
+                      )}
                     </div>
                   )}
 

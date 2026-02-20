@@ -114,19 +114,28 @@ Respond with valid JSON only:
   "additional_assets": [...]
 }`;
 
-export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string): Promise<MultiPassDiscoveryResult> {
+export type ProgressCallback = (phase: string, detail?: string) => void;
+
+export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string, onProgress?: ProgressCallback): Promise<MultiPassDiscoveryResult> {
   let webContext = "";
   let webResearchUsed = false;
 
   if (isSerperAvailable()) {
     try {
+      onProgress?.("web_research", `Searching web for ${companyName} assets...`);
+      console.log(`[Discovery v2] Starting web research for ${companyName}`);
       webContext = await searchCompanyAssets(companyName, isin);
       if (webContext.length > 0) {
         webResearchUsed = true;
+        console.log(`[Discovery v2] Web research complete for ${companyName}: ${webContext.length} chars of context`);
+        onProgress?.("web_research_done", `Web research gathered ${webContext.length} chars of context`);
       }
-    } catch {
+    } catch (err) {
+      console.warn(`[Discovery v2] Web research failed for ${companyName}:`, err instanceof Error ? err.message : err);
       webContext = "";
     }
+  } else {
+    console.log(`[Discovery v2] Serper not available, skipping web research for ${companyName}`);
   }
 
   let userPrompt = `Discover and analyze the physical assets of: ${companyName}`;
@@ -138,6 +147,8 @@ export async function discoverCompany(companyName: string, providerId: string = 
     userPrompt += `\n\n--- WEB RESEARCH DATA ---\nThe following information was gathered from recent web searches about this company's physical assets, facilities, and financial filings. Use this data to improve accuracy of facility names, locations, coordinates, and valuations. Cross-reference with your knowledge and prioritize factual data from these sources:\n\n${webContext}\n--- END WEB RESEARCH DATA ---`;
   }
 
+  onProgress?.("pass1", `Running Pass 1: Initial asset discovery for ${companyName}...`);
+  console.log(`[Discovery v2] Starting Pass 1 for ${companyName} with provider ${providerId}`);
   const pass1Response = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt);
 
   const content = pass1Response.content;
@@ -150,6 +161,9 @@ export async function discoverCompany(companyName: string, providerId: string = 
     throw new Error(`Invalid response structure for company: ${companyName}`);
   }
 
+  console.log(`[Discovery v2] Pass 1 complete for ${companyName}: ${parsed.assets.length} assets found`);
+  onProgress?.("pass1_done", `Pass 1 found ${parsed.assets.length} assets for ${companyName}`);
+
   let totalInputTokens = pass1Response.inputTokens;
   let totalOutputTokens = pass1Response.outputTokens;
   let totalCostUsd = pass1Response.costUsd;
@@ -158,6 +172,8 @@ export async function discoverCompany(companyName: string, providerId: string = 
   const pass2UserPrompt = buildSupplementaryPrompt(parsed, webContext);
 
   try {
+    onProgress?.("pass2", `Running Pass 2: Gap-filling review for ${companyName} (${parsed.assets.length} assets so far)...`);
+    console.log(`[Discovery v2] Starting Pass 2 for ${companyName}`);
     const pass2Response = await callLLM(providerId, SUPPLEMENTARY_PROMPT, pass2UserPrompt);
     passCount = 2;
     totalInputTokens += pass2Response.inputTokens;
@@ -168,9 +184,12 @@ export async function discoverCompany(companyName: string, providerId: string = 
       const supplementary = JSON.parse(pass2Response.content);
       const additionalAssets: DiscoveredAsset[] = supplementary.additional_assets || supplementary.assets || [];
 
+      console.log(`[Discovery v2] Pass 2 returned ${additionalAssets.length} additional assets for ${companyName}`);
+
       if (additionalAssets.length > 0) {
         const existingNames = new Set(parsed.assets.map(a => a.facility_name.toLowerCase().trim()));
         const existingLocations = new Set(parsed.assets.map(a => `${a.city?.toLowerCase().trim()}-${a.asset_type?.toLowerCase().trim()}`));
+        let added = 0;
 
         for (const newAsset of additionalAssets) {
           const nameLower = newAsset.facility_name?.toLowerCase().trim();
@@ -180,14 +199,21 @@ export async function discoverCompany(companyName: string, providerId: string = 
             parsed.assets.push(newAsset);
             existingNames.add(nameLower);
             existingLocations.add(locationKey);
+            added++;
           }
         }
+        console.log(`[Discovery v2] Pass 2 added ${added} unique assets for ${companyName} (${additionalAssets.length - added} duplicates filtered)`);
+        onProgress?.("pass2_done", `Pass 2 added ${added} new assets (total: ${parsed.assets.length})`);
+      } else {
+        onProgress?.("pass2_done", `Pass 2 found no additional assets`);
       }
     }
   } catch (err) {
-    console.warn(`Supplementary pass failed for ${companyName}, using pass 1 results only:`, err instanceof Error ? err.message : err);
+    console.warn(`[Discovery v2] Supplementary pass failed for ${companyName}, using pass 1 results only:`, err instanceof Error ? err.message : err);
+    onProgress?.("pass2_failed", `Pass 2 failed, using ${parsed.assets.length} assets from Pass 1`);
   }
 
+  console.log(`[Discovery v2] Discovery complete for ${companyName}: ${parsed.assets.length} total assets, ${passCount} passes, cost $${totalCostUsd.toFixed(4)}`);
   return {
     company: parsed,
     totalInputTokens,
