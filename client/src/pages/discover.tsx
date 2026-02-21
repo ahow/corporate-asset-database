@@ -299,6 +299,115 @@ export default function Discover() {
     setCompanyInput("");
   }, []);
 
+  const BATCH_SIZE = 50;
+
+  const processBatch = useCallback(async (
+    batchEntries: CompanyEntry[],
+    controller: AbortController,
+    cumulativeState: { completed: number; failed: number; totalCost: number; total: number },
+  ): Promise<{ completed: number; failed: number; totalCost: number; batchResults: DiscoveryResult[] }> => {
+    const response = await fetch("/api/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ companies: batchEntries, provider: selectedProvider }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      throw new Error(errBody?.message || `Discovery request failed (${response.status})`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response stream");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let batchCompleted = 0;
+    let batchFailed = 0;
+    let batchCost = 0;
+    const batchResults: DiscoveryResult[] = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event: DiscoveryEvent = JSON.parse(line.slice(6));
+
+          switch (event.type) {
+            case "processing":
+              setCurrentCompany(event.company || "");
+              setCurrentPhase("");
+              break;
+            case "phase":
+              setCurrentPhase(event.detail || event.phase || "");
+              break;
+            case "completed": {
+              batchCompleted = event.completed || 0;
+              batchFailed = event.failed || 0;
+              batchCost = event.totalCostUsd || 0;
+              const result: DiscoveryResult = {
+                name: event.company || "",
+                status: "success",
+                assetsFound: event.assetsFound,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                costUsd: event.costUsd,
+                normalized: event.normalized,
+                webResearchUsed: event.webResearchUsed,
+              };
+              batchResults.push(result);
+              setResults((prev) => [...prev, result]);
+              setProgress({
+                completed: cumulativeState.completed + batchCompleted,
+                failed: cumulativeState.failed + batchFailed,
+                total: cumulativeState.total,
+              });
+              setRunCost(cumulativeState.totalCost + batchCost);
+              break;
+            }
+            case "error": {
+              batchCompleted = event.completed || 0;
+              batchFailed = event.failed || 0;
+              const errResult: DiscoveryResult = { name: event.company || "", status: "failed", error: event.error };
+              batchResults.push(errResult);
+              setResults((prev) => [...prev, errResult]);
+              setProgress({
+                completed: cumulativeState.completed + batchCompleted,
+                failed: cumulativeState.failed + batchFailed,
+                total: cumulativeState.total,
+              });
+              break;
+            }
+            case "done":
+              batchCompleted = event.completed || 0;
+              batchFailed = event.failed || 0;
+              batchCost = event.totalCostUsd || 0;
+              break;
+            case "fatal_error":
+              throw new Error(event.error || "Fatal error during discovery batch");
+          }
+        } catch (batchErr) {
+          if (batchErr instanceof Error) throw batchErr;
+        }
+      }
+    }
+
+    return {
+      completed: batchCompleted,
+      failed: batchFailed,
+      totalCost: batchCost,
+      batchResults,
+    };
+  }, [selectedProvider]);
+
   const handleDiscover = useCallback(async () => {
     if (entries.length === 0) {
       toast({ title: "No companies entered", description: "Please enter at least one company name.", variant: "destructive" });
@@ -316,89 +425,58 @@ export default function Discover() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    try {
-      const response = await fetch("/api/discover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companies: entries, provider: selectedProvider }),
-        signal: controller.signal,
-      });
+    const batches: CompanyEntry[][] = [];
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      batches.push(entries.slice(i, i + BATCH_SIZE));
+    }
 
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        throw new Error(errBody?.message || `Discovery request failed (${response.status})`);
+    let cumulativeCompleted = 0;
+    let cumulativeFailed = 0;
+    let cumulativeCost = 0;
+
+    try {
+      if (batches.length > 1) {
+        setCurrentPhase(`Processing in ${batches.length} batches of up to ${BATCH_SIZE} companies...`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response stream");
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        if (controller.signal.aborted) break;
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event: DiscoveryEvent = JSON.parse(line.slice(6));
-
-            switch (event.type) {
-              case "processing":
-                setCurrentCompany(event.company || "");
-                setCurrentPhase("");
-                break;
-              case "phase":
-                setCurrentPhase(event.detail || event.phase || "");
-                break;
-              case "completed":
-                setResults((prev) => [...prev, {
-                  name: event.company || "",
-                  status: "success",
-                  assetsFound: event.assetsFound,
-                  inputTokens: event.inputTokens,
-                  outputTokens: event.outputTokens,
-                  costUsd: event.costUsd,
-                  normalized: event.normalized,
-                  webResearchUsed: event.webResearchUsed,
-                }]);
-                setProgress({ completed: event.completed || 0, failed: event.failed || 0, total: event.total || 0 });
-                setRunCost(event.totalCostUsd || 0);
-                break;
-              case "error":
-                setResults((prev) => [...prev, { name: event.company || "", status: "failed", error: event.error }]);
-                setProgress({ completed: event.completed || 0, failed: event.failed || 0, total: event.total || 0 });
-                break;
-              case "done":
-                setIsDone(true);
-                setCurrentCompany("");
-                setCurrentPhase("");
-                setRunCost(event.totalCostUsd || 0);
-                queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/discover/jobs"] });
-                toast({
-                  title: "Discovery complete",
-                  description: `Processed ${event.total} companies: ${event.completed} succeeded, ${event.failed} failed. Cost: ${formatCost(event.totalCostUsd || 0)}`,
-                });
-                break;
-              case "fatal_error":
-                toast({
-                  title: "Discovery failed",
-                  description: event.error || "An unexpected error occurred during discovery.",
-                  variant: "destructive",
-                });
-                break;
-            }
-          } catch {
-          }
+        if (batches.length > 1) {
+          setCurrentPhase(`Starting batch ${batchIdx + 1} of ${batches.length}...`);
         }
+
+        const batchResult = await processBatch(
+          batches[batchIdx],
+          controller,
+          { completed: cumulativeCompleted, failed: cumulativeFailed, totalCost: cumulativeCost, total: entries.length },
+        );
+
+        cumulativeCompleted += batchResult.completed;
+        cumulativeFailed += batchResult.failed;
+        cumulativeCost += batchResult.totalCost;
+      }
+
+      setCurrentCompany("");
+      setCurrentPhase("");
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/discover/jobs"] });
+
+      if (controller.signal.aborted) {
+        setRunCost(cumulativeCost);
+        toast({
+          title: "Discovery cancelled",
+          description: `Stopped after ${cumulativeCompleted + cumulativeFailed} of ${entries.length} companies. ${cumulativeCompleted} succeeded, ${cumulativeFailed} failed. Completed companies are saved.`,
+        });
+      } else {
+        setIsDone(true);
+        setRunCost(cumulativeCost);
+        toast({
+          title: "Discovery complete",
+          description: `Processed ${entries.length} companies: ${cumulativeCompleted} succeeded, ${cumulativeFailed} failed. Cost: ${formatCost(cumulativeCost)}`,
+        });
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -407,7 +485,7 @@ export default function Discover() {
         toast({
           title: "Discovery failed",
           description: isNetworkError
-            ? "Connection lost. The server may have timed out. Try discovering fewer companies at a time (10-20)."
+            ? "Connection lost. The server may have timed out. Check results so far — completed companies are saved."
             : errMsg || "An error occurred during discovery.",
           variant: "destructive",
         });
@@ -416,7 +494,7 @@ export default function Discover() {
       setIsRunning(false);
       abortRef.current = null;
     }
-  }, [entries, selectedProvider, toast]);
+  }, [entries, selectedProvider, toast, processBatch]);
 
   const progressPercent = progress.total > 0 ? ((progress.completed + progress.failed) / progress.total) * 100 : 0;
 
