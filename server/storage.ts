@@ -42,7 +42,7 @@ export interface IStorage {
   createDiscoveryJob(job: InsertDiscoveryJob): Promise<DiscoveryJob>;
   getDiscoveryJob(id: number): Promise<DiscoveryJob | undefined>;
   getDiscoveryJobs(): Promise<DiscoveryJob[]>;
-  updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob>): Promise<DiscoveryJob | undefined>;
+  updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob> & { updatedAt?: Date }): Promise<DiscoveryJob | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -187,7 +187,7 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(discoveryJobs).orderBy(desc(discoveryJobs.createdAt));
   }
 
-  async updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob>): Promise<DiscoveryJob | undefined> {
+  async updateDiscoveryJob(id: number, data: Partial<InsertDiscoveryJob> & { updatedAt?: Date }): Promise<DiscoveryJob | undefined> {
     const [updated] = await db.update(discoveryJobs).set(data).where(eq(discoveryJobs.id, id)).returning();
     return updated;
   }

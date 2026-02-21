@@ -48,11 +48,12 @@ export const discoveryJobs = pgTable("discovery_jobs", {
   totalOutputTokens: integer("total_output_tokens").default(0),
   totalCostUsd: doublePrecision("total_cost_usd").default(0),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 export const insertCompanySchema = createInsertSchema(companies).omit({ id: true });
 export const insertAssetSchema = createInsertSchema(assets).omit({ id: true });
-export const insertDiscoveryJobSchema = createInsertSchema(discoveryJobs).omit({ id: true, createdAt: true });
+export const insertDiscoveryJobSchema = createInsertSchema(discoveryJobs).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type InsertCompany = z.infer<typeof insertCompanySchema>;
 export type Company = typeof companies.$inferSelect;

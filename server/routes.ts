@@ -308,7 +308,18 @@ export async function registerRoutes(
       res.setHeader("X-Accel-Buffering", "no");
 
       let clientDisconnected = false;
-      req.on("close", () => { clientDisconnected = true; });
+      req.on("close", async () => {
+        clientDisconnected = true;
+        try {
+          const currentJob = await storage.getDiscoveryJob(job.id);
+          if (currentJob && currentJob.status === "running") {
+            await storage.updateDiscoveryJob(job.id, {
+              status: "interrupted",
+              updatedAt: new Date(),
+            });
+          }
+        } catch {}
+      });
 
       keepAlive = setInterval(() => {
         if (!clientDisconnected) {
@@ -401,6 +412,7 @@ export async function registerRoutes(
           totalInputTokens,
           totalOutputTokens,
           totalCostUsd,
+          updatedAt: new Date(),
         });
       }
 
@@ -412,6 +424,7 @@ export async function registerRoutes(
         totalInputTokens,
         totalOutputTokens,
         totalCostUsd,
+        updatedAt: new Date(),
       });
 
       clearInterval(keepAlive);

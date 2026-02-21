@@ -90,6 +90,7 @@ interface DiscoveryJob {
   totalOutputTokens: number | null;
   totalCostUsd: number | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 function formatCost(cost: number): string {
@@ -101,6 +102,39 @@ function formatCost(cost: number): string {
 function formatTokens(tokens: number): string {
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`;
   return tokens.toString();
+}
+
+function formatElapsed(start: string, end?: string): string {
+  const startMs = new Date(start).getTime();
+  const endMs = end ? new Date(end).getTime() : Date.now();
+  const diffSec = Math.floor((endMs - startMs) / 1000);
+  if (diffSec < 60) return `${diffSec}s`;
+  const mins = Math.floor(diffSec / 60);
+  const secs = diffSec % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
+function getJobDisplayStatus(job: DiscoveryJob): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; isActive: boolean } {
+  if (job.status === "complete") {
+    return { label: "Complete", variant: "secondary", isActive: false };
+  }
+  if (job.status === "interrupted") {
+    return { label: "Interrupted", variant: "outline", isActive: false };
+  }
+  if (job.status === "failed") {
+    return { label: "Failed", variant: "destructive", isActive: false };
+  }
+  if (job.status === "running") {
+    const updatedMs = new Date(job.updatedAt).getTime();
+    const staleThreshold = 10 * 60 * 1000;
+    if (Date.now() - updatedMs > staleThreshold) {
+      return { label: "Stalled", variant: "destructive", isActive: false };
+    }
+    return { label: "Running", variant: "default", isActive: true };
+  }
+  return { label: job.status, variant: "outline", isActive: false };
 }
 
 function parseDelimitedLine(line: string, delimiter: string): string[] {
@@ -218,6 +252,12 @@ export default function Discover() {
 
   const { data: jobs } = useQuery<DiscoveryJob[]>({
     queryKey: ["/api/discover/jobs"],
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      const hasActive = data.some(j => j.status === "running");
+      return hasActive ? 5000 : false;
+    },
   });
 
   const entries = companyInput.trim() ? parseCompanyEntries(companyInput) : [];
@@ -789,6 +829,12 @@ export default function Discover() {
             <CardHeader className="flex flex-row items-center gap-2">
               <Zap className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-medium">Discovery History</CardTitle>
+              {jobs.some(j => j.status === "running") && (
+                <Badge variant="default" className="ml-auto animate-pulse" data-testid="badge-jobs-active">
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  Active
+                </Badge>
+              )}
             </CardHeader>
             <CardContent>
               <div className="rounded-md border border-border overflow-hidden">
@@ -799,8 +845,8 @@ export default function Discover() {
                       <th className="px-3 py-2 text-xs font-medium">Model</th>
                       <th className="px-3 py-2 text-xs font-medium">Companies</th>
                       <th className="px-3 py-2 text-xs font-medium">Status</th>
-                      <th className="px-3 py-2 text-xs font-medium text-right">Succeeded</th>
-                      <th className="px-3 py-2 text-xs font-medium text-right">Failed</th>
+                      <th className="px-3 py-2 text-xs font-medium">Progress</th>
+                      <th className="px-3 py-2 text-xs font-medium text-right">Duration</th>
                       <th className="px-3 py-2 text-xs font-medium text-right">Tokens</th>
                       <th className="px-3 py-2 text-xs font-medium text-right">Cost</th>
                     </tr>
@@ -811,24 +857,45 @@ export default function Discover() {
                         try { return JSON.parse(job.companyNames); } catch { return []; }
                       })();
                       const providerName = providers?.find((p) => p.id === job.modelProvider)?.name || job.modelProvider || "OpenAI";
+                      const displayStatus = getJobDisplayStatus(job);
+                      const processed = job.completedCompanies + job.failedCompanies;
+                      const jobProgress = job.totalCompanies > 0 ? (processed / job.totalCompanies) * 100 : 0;
+                      const isFinished = job.status === "complete" || job.status === "interrupted" || job.status === "failed";
                       return (
-                        <tr key={job.id} data-testid={`row-job-${job.id}`}>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {new Date(job.createdAt).toLocaleDateString()}
+                        <tr key={job.id} data-testid={`row-job-${job.id}`} className={displayStatus.isActive ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}>
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                            {new Date(job.createdAt).toLocaleDateString()}{" "}
+                            <span className="text-xs">{new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                           </td>
                           <td className="px-3 py-2">
                             <Badge variant="outline" data-testid={`badge-model-${job.id}`}>{providerName}</Badge>
                           </td>
                           <td className="px-3 py-2">
-                            {names.slice(0, 3).join(", ")}{names.length > 3 ? ` +${names.length - 3} more` : ""}
+                            <span className="font-mono text-xs">{job.totalCompanies}</span>
+                            <span className="text-muted-foreground text-xs ml-1">
+                              ({names.slice(0, 2).join(", ")}{names.length > 2 ? ` +${names.length - 2}` : ""})
+                            </span>
                           </td>
                           <td className="px-3 py-2">
-                            <Badge variant={job.status === "complete" ? "secondary" : "outline"}>
-                              {job.status}
+                            <Badge variant={displayStatus.variant} data-testid={`badge-status-${job.id}`}>
+                              {displayStatus.isActive && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+                              {displayStatus.label}
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 text-right font-mono">{job.completedCompanies}</td>
-                          <td className="px-3 py-2 text-right font-mono">{job.failedCompanies}</td>
+                          <td className="px-3 py-2 min-w-[140px]">
+                            <div className="flex items-center gap-2">
+                              <Progress value={jobProgress} className="h-2 flex-1" />
+                              <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
+                                {job.completedCompanies}/{job.totalCompanies}
+                                {job.failedCompanies > 0 && (
+                                  <span className="text-red-500"> ({job.failedCompanies}✗)</span>
+                                )}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-muted-foreground text-xs whitespace-nowrap" data-testid={`text-duration-${job.id}`}>
+                            {formatElapsed(job.createdAt, isFinished ? job.updatedAt : undefined)}
+                          </td>
                           <td className="px-3 py-2 text-right font-mono text-muted-foreground">
                             {job.totalInputTokens || job.totalOutputTokens
                               ? formatTokens((job.totalInputTokens || 0) + (job.totalOutputTokens || 0))

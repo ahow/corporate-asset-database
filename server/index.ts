@@ -71,6 +71,18 @@ app.use((req, res, next) => {
     console.error("Seed error:", err);
   }
 
+  try {
+    const { storage } = await import("./storage");
+    const jobs = await storage.getDiscoveryJobs();
+    const staleJobs = jobs.filter(j => j.status === "running");
+    for (const j of staleJobs) {
+      await storage.updateDiscoveryJob(j.id, { status: "interrupted", updatedAt: new Date() });
+      console.log(`Marked stale job ${j.id} as interrupted (was running at startup)`);
+    }
+  } catch (err) {
+    console.error("Error cleaning stale jobs:", err);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
