@@ -337,7 +337,7 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany, provi
 
   const company = await storage.upsertCompany(companyData);
 
-  await storage.deleteAssetsByCompany(discovered.name);
+  await storage.deleteAssetsByIsin(discovered.isin);
 
   const providerLabel = providerId === "openai" ? "GPT" :
     providerId === "deepseek" ? "DeepSeek" :

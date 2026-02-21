@@ -30,6 +30,7 @@ export interface IStorage {
   updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset | undefined>;
   deleteAsset(id: number): Promise<boolean>;
   deleteAssetsByCompany(companyName: string): Promise<number>;
+  deleteAssetsByIsin(isin: string): Promise<number>;
   bulkCreateAssets(assetList: InsertAsset[]): Promise<void>;
   getAssetCount(): Promise<number>;
   getStats(): Promise<{
@@ -130,6 +131,11 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAssetsByCompany(companyName: string): Promise<number> {
     const result = await db.delete(assets).where(eq(assets.companyName, companyName)).returning();
+    return result.length;
+  }
+
+  async deleteAssetsByIsin(isin: string): Promise<number> {
+    const result = await db.delete(assets).where(eq(assets.isin, isin)).returning();
     return result.length;
   }
 
