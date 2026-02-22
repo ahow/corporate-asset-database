@@ -1026,6 +1026,45 @@ export default function Discover() {
                                       No company results recorded for this job.
                                     </div>
                                   )}
+
+                                  {!displayStatus.isActive && !isRunning && (() => {
+                                    const failedResults = jobResults.filter((r: DiscoveryResult) => r.status === "failed");
+                                    const completedResultNames = new Set(jobResults.map((r: DiscoveryResult) => r.name));
+                                    const unprocessed = names.filter(n => !completedResultNames.has(n));
+                                    const retryCompanies = [...failedResults.map((r: DiscoveryResult) => r.name), ...unprocessed];
+                                    if (retryCompanies.length === 0) return null;
+
+                                    const handleRetry = () => {
+                                      setCompanyInput(retryCompanies.join("\n"));
+                                      if (job.modelProvider) setSelectedProvider(job.modelProvider);
+                                      setExpandedJobId(null);
+                                      window.scrollTo({ top: 0, behavior: "smooth" });
+                                      toast({
+                                        title: `${retryCompanies.length} companies loaded`,
+                                        description: `${failedResults.length} failed + ${unprocessed.length} unprocessed companies ready to retry.`,
+                                      });
+                                    };
+
+                                    return (
+                                      <div className="flex items-center justify-between pt-2 border-t border-border">
+                                        <span className="text-xs text-muted-foreground">
+                                          {failedResults.length > 0 && `${failedResults.length} failed`}
+                                          {failedResults.length > 0 && unprocessed.length > 0 && ", "}
+                                          {unprocessed.length > 0 && `${unprocessed.length} unprocessed`}
+                                        </span>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={(e) => { e.stopPropagation(); handleRetry(); }}
+                                          data-testid={`button-retry-${job.id}`}
+                                        >
+                                          <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                                          {unprocessed.length > 0 ? "Resume & Retry" : "Retry Failed"}
+                                          {" "}({retryCompanies.length})
+                                        </Button>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               </td>
                             </tr>
