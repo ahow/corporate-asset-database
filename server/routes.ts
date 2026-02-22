@@ -394,7 +394,7 @@ export async function registerRoutes(
             break;
           } catch (err) {
             lastError = err instanceof Error ? err.message : "Unknown error";
-            const isRetryable = lastError.includes("429") || lastError.includes("rate") || lastError.includes("timeout") || lastError.includes("ECONNRESET") || lastError.includes("500") || lastError.includes("503");
+            const isRetryable = lastError.includes("429") || lastError.includes("rate") || lastError.includes("timeout") || lastError.includes("ECONNRESET") || lastError.includes("500") || lastError.includes("503") || lastError.includes("terminated") || lastError.includes("ETIMEDOUT") || lastError.includes("ECONNREFUSED") || lastError.includes("socket hang up") || lastError.includes("fetch failed");
             if (!isRetryable || attempt === maxRetries) break;
           }
         }

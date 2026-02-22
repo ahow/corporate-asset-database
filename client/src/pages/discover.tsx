@@ -500,15 +500,42 @@ export default function Discover() {
           setCurrentPhase(`Starting batch ${batchIdx + 1} of ${batches.length}...`);
         }
 
-        const batchResult = await processBatch(
-          batches[batchIdx],
-          controller,
-          { completed: cumulativeCompleted, failed: cumulativeFailed, totalCost: cumulativeCost, total: entries.length },
-        );
+        try {
+          const batchResult = await processBatch(
+            batches[batchIdx],
+            controller,
+            { completed: cumulativeCompleted, failed: cumulativeFailed, totalCost: cumulativeCost, total: entries.length },
+          );
 
-        cumulativeCompleted += batchResult.completed;
-        cumulativeFailed += batchResult.failed;
-        cumulativeCost += batchResult.totalCost;
+          cumulativeCompleted += batchResult.completed;
+          cumulativeFailed += batchResult.failed;
+          cumulativeCost += batchResult.totalCost;
+        } catch (batchErr) {
+          if (controller.signal.aborted) break;
+          if ((batchErr as Error).name === "AbortError") break;
+          const batchSize = batches[batchIdx].length;
+          cumulativeFailed += batchSize;
+          setProgress({
+            completed: cumulativeCompleted,
+            failed: cumulativeFailed,
+            total: entries.length,
+          });
+          console.error(`Batch ${batchIdx + 1} failed:`, batchErr);
+          const batchErrMsg = (batchErr as Error).message || "Unknown error";
+          for (const entry of batches[batchIdx]) {
+            setResults(prev => [...prev, { name: entry.name, status: "failed", error: `Batch error: ${batchErrMsg}` }]);
+          }
+          toast({
+            title: `Batch ${batchIdx + 1} failed`,
+            description: `${batchErrMsg}. Continuing to next batch...`,
+            variant: "destructive",
+          });
+        }
+
+        if (batchIdx < batches.length - 1 && !controller.signal.aborted) {
+          setCurrentPhase(`Batch ${batchIdx + 1} complete. Starting next batch in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
 
       setCurrentCompany("");
