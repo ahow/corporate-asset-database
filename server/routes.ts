@@ -238,12 +238,14 @@ export async function registerRoutes(
   });
 
   app.get("/api/parallel-status", (_req, res) => {
-    const deepseekKeys = getParallelApiKeys("deepseek");
+    const providers: Record<string, { available: boolean; workerCount: number }> = {};
+    for (const pid of ["deepseek", "minimax"]) {
+      const keys = getParallelApiKeys(pid);
+      providers[pid] = { available: keys.length >= 2, workerCount: keys.length };
+    }
     res.json({
-      available: deepseekKeys.length >= 2,
-      workerCount: deepseekKeys.length,
+      providers,
       activeWorkers: getActiveWorkerCount(),
-      provider: "deepseek",
     });
   });
 

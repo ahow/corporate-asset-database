@@ -173,7 +173,7 @@ async function runJob(jobId: number) {
     updatedAt: new Date(),
   });
 
-  const parallelKeys = providerId === "deepseek" ? getParallelApiKeys("deepseek") : [];
+  const parallelKeys = getParallelApiKeys(providerId);
   const useParallel = parallelKeys.length >= 2;
   const workerCount = useParallel ? parallelKeys.length : 1;
   activeWorkerCount = workerCount;
