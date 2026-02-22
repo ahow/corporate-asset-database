@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,9 @@ import {
   FileText,
   X,
   Globe,
+  ChevronDown,
+  ChevronRight,
+  Clock,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -239,6 +242,7 @@ export default function Discover() {
   const [isDone, setIsDone] = useState(false);
   const [runCost, setRunCost] = useState(0);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [expandedJobId, setExpandedJobId] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -257,6 +261,16 @@ export default function Discover() {
       if (!data) return false;
       const hasActive = data.some(j => j.status === "running");
       return hasActive ? 5000 : false;
+    },
+  });
+
+  const { data: expandedJob } = useQuery<DiscoveryJob>({
+    queryKey: ["/api/discover/jobs", expandedJobId],
+    enabled: expandedJobId !== null,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      return data.status === "running" ? 3000 : false;
     },
   });
 
@@ -853,7 +867,7 @@ export default function Discover() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {jobs.map((job) => {
-                      const names = (() => {
+                      const names: string[] = (() => {
                         try { return JSON.parse(job.companyNames); } catch { return []; }
                       })();
                       const providerName = providers?.find((p) => p.id === job.modelProvider)?.name || job.modelProvider || "OpenAI";
@@ -861,50 +875,162 @@ export default function Discover() {
                       const processed = job.completedCompanies + job.failedCompanies;
                       const jobProgress = job.totalCompanies > 0 ? (processed / job.totalCompanies) * 100 : 0;
                       const isFinished = job.status === "complete" || job.status === "interrupted" || job.status === "failed";
+                      const isExpanded = expandedJobId === job.id;
+                      const detailJob = isExpanded && expandedJob ? expandedJob : job;
+                      const jobResults: DiscoveryResult[] = (() => {
+                        try { return detailJob.results ? JSON.parse(detailJob.results) : []; } catch { return []; }
+                      })();
+                      const completedNames = new Set(jobResults.map((r: DiscoveryResult) => r.name));
+                      const pendingNames = names.filter(n => !completedNames.has(n));
+
                       return (
-                        <tr key={job.id} data-testid={`row-job-${job.id}`} className={displayStatus.isActive ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}>
-                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
-                            {new Date(job.createdAt).toLocaleDateString()}{" "}
-                            <span className="text-xs">{new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge variant="outline" data-testid={`badge-model-${job.id}`}>{providerName}</Badge>
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className="font-mono text-xs">{job.totalCompanies}</span>
-                            <span className="text-muted-foreground text-xs ml-1">
-                              ({names.slice(0, 2).join(", ")}{names.length > 2 ? ` +${names.length - 2}` : ""})
-                            </span>
-                          </td>
-                          <td className="px-3 py-2">
-                            <Badge variant={displayStatus.variant} data-testid={`badge-status-${job.id}`}>
-                              {displayStatus.isActive && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
-                              {displayStatus.label}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 min-w-[140px]">
-                            <div className="flex items-center gap-2">
-                              <Progress value={jobProgress} className="h-2 flex-1" />
-                              <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
-                                {job.completedCompanies}/{job.totalCompanies}
-                                {job.failedCompanies > 0 && (
-                                  <span className="text-red-500"> ({job.failedCompanies}✗)</span>
-                                )}
+                        <Fragment key={job.id}>
+                          <tr
+                            data-testid={`row-job-${job.id}`}
+                            className={`cursor-pointer hover:bg-muted/30 transition-colors ${displayStatus.isActive ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}`}
+                            onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
+                          >
+                            <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                              <div className="flex items-center gap-1">
+                                {isExpanded ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                                <span>
+                                  {new Date(job.createdAt).toLocaleDateString()}{" "}
+                                  <span className="text-xs">{new Date(job.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge variant="outline" data-testid={`badge-model-${job.id}`}>{providerName}</Badge>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="font-mono text-xs">{job.totalCompanies}</span>
+                              <span className="text-muted-foreground text-xs ml-1">
+                                ({names.slice(0, 2).join(", ")}{names.length > 2 ? ` +${names.length - 2}` : ""})
                               </span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-muted-foreground text-xs whitespace-nowrap" data-testid={`text-duration-${job.id}`}>
-                            {formatElapsed(job.createdAt, isFinished ? job.updatedAt : undefined)}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono text-muted-foreground">
-                            {job.totalInputTokens || job.totalOutputTokens
-                              ? formatTokens((job.totalInputTokens || 0) + (job.totalOutputTokens || 0))
-                              : "-"}
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono" data-testid={`text-cost-${job.id}`}>
-                            {job.totalCostUsd ? formatCost(job.totalCostUsd) : "-"}
-                          </td>
-                        </tr>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge variant={displayStatus.variant} data-testid={`badge-status-${job.id}`}>
+                                {displayStatus.isActive && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+                                {displayStatus.label}
+                              </Badge>
+                            </td>
+                            <td className="px-3 py-2 min-w-[140px]">
+                              <div className="flex items-center gap-2">
+                                <Progress value={jobProgress} className="h-2 flex-1" />
+                                <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
+                                  {job.completedCompanies}/{job.totalCompanies}
+                                  {job.failedCompanies > 0 && (
+                                    <span className="text-red-500"> ({job.failedCompanies}✗)</span>
+                                  )}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground text-xs whitespace-nowrap" data-testid={`text-duration-${job.id}`}>
+                              {formatElapsed(job.createdAt, isFinished ? job.updatedAt : undefined)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                              {job.totalInputTokens || job.totalOutputTokens
+                                ? formatTokens((job.totalInputTokens || 0) + (job.totalOutputTokens || 0))
+                                : "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono" data-testid={`text-cost-${job.id}`}>
+                              {job.totalCostUsd ? formatCost(job.totalCostUsd) : "-"}
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr key={`${job.id}-detail`}>
+                              <td colSpan={8} className="p-0">
+                                <div className="bg-muted/20 border-t border-border px-4 py-3 space-y-3">
+                                  {displayStatus.isActive && (
+                                    <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Live — refreshing every 3 seconds</span>
+                                    </div>
+                                  )}
+
+                                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      Started: {new Date(job.createdAt).toLocaleString()}
+                                    </span>
+                                    <span>Duration: {formatElapsed(job.createdAt, isFinished ? job.updatedAt : undefined)}</span>
+                                    {detailJob.totalCostUsd ? <span>Total cost: {formatCost(detailJob.totalCostUsd)}</span> : null}
+                                  </div>
+
+                                  <div className="space-y-1 max-h-[400px] overflow-y-auto">
+                                    {jobResults.map((r: DiscoveryResult, i: number) => (
+                                      <div
+                                        key={i}
+                                        className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-1.5"
+                                        data-testid={`detail-result-${job.id}-${i}`}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          {r.status === "success" ? (
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-green-600 dark:text-green-400 shrink-0" />
+                                          ) : (
+                                            <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                          )}
+                                          <span className="text-sm truncate">{r.name}</span>
+                                          {r.status === "failed" && r.error && (
+                                            <span className="text-xs text-red-500 truncate ml-1">— {r.error}</span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          {r.webResearchUsed && (
+                                            <Badge variant="outline" className="text-[10px] h-5">
+                                              <Globe className="w-2.5 h-2.5 mr-0.5" />
+                                              Web
+                                            </Badge>
+                                          )}
+                                          {r.normalized && (
+                                            <Badge variant="outline" className="text-[10px] h-5">Norm</Badge>
+                                          )}
+                                          {r.costUsd !== undefined && (
+                                            <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
+                                          )}
+                                          {r.status === "success" && (
+                                            <Badge variant="secondary" className="text-[10px] h-5">{r.assetsFound} assets</Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+
+                                    {displayStatus.isActive && pendingNames.length > 0 && (
+                                      <>
+                                        <div className="flex items-center gap-2 rounded-md border border-dashed border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/30 px-3 py-1.5">
+                                          <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                                          <span className="text-sm text-blue-700 dark:text-blue-300">{pendingNames[0]}</span>
+                                          <span className="text-xs text-blue-500 ml-auto">Processing...</span>
+                                        </div>
+                                        {pendingNames.slice(1, 6).map((name, i) => (
+                                          <div
+                                            key={`pending-${i}`}
+                                            className="flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-1.5 opacity-50"
+                                          >
+                                            <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                            <span className="text-sm text-muted-foreground">{name}</span>
+                                            <span className="text-xs text-muted-foreground ml-auto">Queued</span>
+                                          </div>
+                                        ))}
+                                        {pendingNames.length > 6 && (
+                                          <div className="text-xs text-muted-foreground text-center py-1">
+                                            +{pendingNames.length - 6} more companies queued
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+
+                                  {jobResults.length === 0 && !displayStatus.isActive && (
+                                    <div className="text-sm text-muted-foreground text-center py-2">
+                                      No company results recorded for this job.
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
