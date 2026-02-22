@@ -5,6 +5,7 @@ import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
 import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type MultiPassDiscoveryResult, type ProgressCallback } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
 import { isSerperAvailable } from "./serper";
+import { startJobRunner, cancelJob, resumeJob, isJobRunnerBusy } from "./job-runner";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -267,7 +268,6 @@ export async function registerRoutes(
   });
 
   app.post("/api/discover", async (req, res) => {
-    let keepAlive: ReturnType<typeof setInterval> | null = null;
     try {
       const { companies: companyEntries, provider: providerId = "openai" } = req.body;
       if (!companyEntries || !Array.isArray(companyEntries) || companyEntries.length === 0) {
@@ -290,156 +290,52 @@ export async function registerRoutes(
       const names = entries.map((e) => e.name);
 
       const job = await storage.createDiscoveryJob({
-        status: "running",
+        status: "pending",
         modelProvider: providerId,
         totalCompanies: entries.length,
         completedCompanies: 0,
         failedCompanies: 0,
         companyNames: JSON.stringify(names),
+        companyEntries: JSON.stringify(entries),
         results: null,
         totalInputTokens: 0,
         totalOutputTokens: 0,
         totalCostUsd: 0,
       });
 
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
+      console.log(`[Discovery] Created background job ${job.id} for ${entries.length} companies with provider ${providerId}`);
 
-      let clientDisconnected = false;
-      req.on("close", async () => {
-        clientDisconnected = true;
-        try {
-          const currentJob = await storage.getDiscoveryJob(job.id);
-          if (currentJob && currentJob.status === "running") {
-            await storage.updateDiscoveryJob(job.id, {
-              status: "interrupted",
-              updatedAt: new Date(),
-            });
-          }
-        } catch {}
-      });
+      startJobRunner();
 
-      keepAlive = setInterval(() => {
-        if (!clientDisconnected) {
-          res.write(`: keep-alive\n\n`);
-        }
-      }, 10000);
-
-      console.log(`[Discovery v2] Starting discovery job ${job.id} for ${entries.length} companies with provider ${providerId}`);
-      res.write(`data: ${JSON.stringify({ type: "started", jobId: job.id, total: entries.length, provider: providerId, version: "v2-twopass" })}\n\n`);
-
-      const results: Array<{ name: string; status: string; assetsFound?: number; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number; normalized?: boolean; webResearchUsed?: boolean }> = [];
-      let completed = 0;
-      let failed = 0;
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCostUsd = 0;
-
-      for (const entry of entries) {
-        if (clientDisconnected) break;
-        const displayName = entry.isin ? `${entry.name} (${entry.isin})` : entry.name;
-        res.write(`data: ${JSON.stringify({ type: "processing", company: displayName, index: completed + failed })}\n\n`);
-
-        let lastError = "";
-        let succeeded = false;
-        const maxRetries = 2;
-
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-          try {
-            if (attempt > 0) {
-              const delay = attempt * 3000;
-              console.log(`Retrying ${displayName} (attempt ${attempt + 1}/${maxRetries + 1}) after ${delay}ms`);
-              await new Promise(r => setTimeout(r, delay));
-            }
-            const progressCallback: ProgressCallback = (phase, detail) => {
-              if (!clientDisconnected) {
-                res.write(`data: ${JSON.stringify({ type: "phase", company: displayName, phase, detail })}\n\n`);
-              }
-            };
-            const result = await discoverCompany(entry.name, providerId, entry.isin, progressCallback);
-            const normalized = normalizeAssetValues(result.company, entry.totalValue);
-            const saved = await saveDiscoveredCompany(result.company, providerId);
-            completed++;
-            totalInputTokens += result.totalInputTokens;
-            totalOutputTokens += result.totalOutputTokens;
-            totalCostUsd += result.totalCostUsd;
-            results.push({
-              name: result.company.name,
-              status: "success",
-              assetsFound: saved.assetCount,
-              inputTokens: result.totalInputTokens,
-              outputTokens: result.totalOutputTokens,
-              costUsd: result.totalCostUsd,
-              normalized,
-              webResearchUsed: result.webResearchUsed,
-            });
-            res.write(`data: ${JSON.stringify({
-              type: "completed",
-              company: result.company.name,
-              assetsFound: saved.assetCount,
-              completed,
-              failed,
-              total: entries.length,
-              inputTokens: result.totalInputTokens,
-              outputTokens: result.totalOutputTokens,
-              costUsd: result.totalCostUsd,
-              totalCostUsd,
-              normalized,
-              webResearchUsed: result.webResearchUsed,
-              passCount: result.passCount,
-            })}\n\n`);
-            succeeded = true;
-            break;
-          } catch (err) {
-            lastError = err instanceof Error ? err.message : "Unknown error";
-            const isRetryable = lastError.includes("429") || lastError.includes("rate") || lastError.includes("timeout") || lastError.includes("ECONNRESET") || lastError.includes("500") || lastError.includes("503") || lastError.includes("terminated") || lastError.includes("ETIMEDOUT") || lastError.includes("ECONNREFUSED") || lastError.includes("socket hang up") || lastError.includes("fetch failed");
-            if (!isRetryable || attempt === maxRetries) break;
-          }
-        }
-
-        if (!succeeded) {
-          failed++;
-          results.push({ name: displayName, status: "failed", error: lastError });
-          res.write(`data: ${JSON.stringify({ type: "error", company: displayName, error: lastError, completed, failed, total: entries.length })}\n\n`);
-        }
-
-        await storage.updateDiscoveryJob(job.id, {
-          completedCompanies: completed,
-          failedCompanies: failed,
-          results: JSON.stringify(results),
-          totalInputTokens,
-          totalOutputTokens,
-          totalCostUsd,
-          updatedAt: new Date(),
-        });
-      }
-
-      await storage.updateDiscoveryJob(job.id, {
-        status: "complete",
-        completedCompanies: completed,
-        failedCompanies: failed,
-        results: JSON.stringify(results),
-        totalInputTokens,
-        totalOutputTokens,
-        totalCostUsd,
-        updatedAt: new Date(),
-      });
-
-      clearInterval(keepAlive);
-      res.write(`data: ${JSON.stringify({ type: "done", jobId: job.id, completed, failed, total: entries.length, results, totalCostUsd, totalInputTokens, totalOutputTokens })}\n\n`);
-      res.end();
+      res.json({ jobId: job.id, total: entries.length, provider: providerId, status: "pending" });
     } catch (err) {
-      if (keepAlive) clearInterval(keepAlive);
       const errorDetail = err instanceof Error ? err.message : String(err);
-      console.error("Error in discovery:", errorDetail, err);
-      if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ type: "fatal_error", error: errorDetail })}\n\n`);
-        res.end();
-      } else {
-        res.status(500).json({ message: `Discovery failed: ${errorDetail}` });
-      }
+      console.error("Error creating discovery job:", errorDetail, err);
+      res.status(500).json({ message: `Failed to start discovery: ${errorDetail}` });
+    }
+  });
+
+  app.post("/api/discover/jobs/:id/cancel", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid job ID" });
+      const success = await cancelJob(id);
+      if (!success) return res.status(400).json({ message: "Job cannot be cancelled (not running or pending)" });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to cancel job" });
+    }
+  });
+
+  app.post("/api/discover/jobs/:id/resume", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid job ID" });
+      const success = await resumeJob(id);
+      if (!success) return res.status(400).json({ message: "Job cannot be resumed" });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to resume job" });
     }
   });
 

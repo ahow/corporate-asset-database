@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, Fragment } from "react";
+import { useState, useRef, useCallback, useEffect, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,29 +57,6 @@ interface DiscoveryResult {
   webResearchUsed?: boolean;
 }
 
-interface DiscoveryEvent {
-  type: string;
-  jobId?: number;
-  total?: number;
-  company?: string;
-  index?: number;
-  assetsFound?: number;
-  completed?: number;
-  failed?: number;
-  error?: string;
-  results?: DiscoveryResult[];
-  inputTokens?: number;
-  outputTokens?: number;
-  costUsd?: number;
-  totalCostUsd?: number;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
-  normalized?: boolean;
-  webResearchUsed?: boolean;
-  phase?: string;
-  detail?: string;
-}
-
 interface DiscoveryJob {
   id: number;
   status: string;
@@ -128,6 +105,12 @@ function getJobDisplayStatus(job: DiscoveryJob): { label: string; variant: "defa
   }
   if (job.status === "failed") {
     return { label: "Failed", variant: "destructive", isActive: false };
+  }
+  if (job.status === "cancelled") {
+    return { label: "Cancelled", variant: "outline", isActive: false };
+  }
+  if (job.status === "pending") {
+    return { label: "Queued", variant: "default", isActive: true };
   }
   if (job.status === "running") {
     const updatedMs = new Date(job.updatedAt).getTime();
@@ -234,16 +217,9 @@ export default function Discover() {
   const { toast } = useToast();
   const [companyInput, setCompanyInput] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("openai");
-  const [isRunning, setIsRunning] = useState(false);
-  const [currentCompany, setCurrentCompany] = useState("");
-  const [currentPhase, setCurrentPhase] = useState("");
-  const [progress, setProgress] = useState({ completed: 0, failed: 0, total: 0 });
-  const [results, setResults] = useState<DiscoveryResult[]>([]);
-  const [isDone, setIsDone] = useState(false);
-  const [runCost, setRunCost] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [expandedJobId, setExpandedJobId] = useState<number | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { data: providers } = useQuery<LLMProvider[]>({
@@ -254,15 +230,32 @@ export default function Discover() {
     queryKey: ["/api/serper/status"],
   });
 
-  const { data: jobs } = useQuery<DiscoveryJob[]>({
+  const { data: jobs, refetch: refetchJobs } = useQuery<DiscoveryJob[]>({
     queryKey: ["/api/discover/jobs"],
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      const hasActive = data.some(j => j.status === "running");
-      return hasActive ? 5000 : false;
+      const hasActive = data.some(j => j.status === "running" || j.status === "pending");
+      return hasActive || activeJobId ? 3000 : false;
     },
   });
+
+  const activeJob = activeJobId ? jobs?.find(j => j.id === activeJobId) : null;
+  const isRunning = activeJob ? (activeJob.status === "running" || activeJob.status === "pending") : false;
+
+  useEffect(() => {
+    if (activeJobId && activeJob && !isRunning) {
+      if (activeJob.status === "complete") {
+        setActiveJobId(null);
+        setExpandedJobId(activeJobId);
+        queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      } else if (activeJob.status === "failed" || activeJob.status === "cancelled") {
+        setActiveJobId(null);
+      }
+    }
+  }, [activeJobId, activeJob, isRunning]);
 
   const { data: expandedJob } = useQuery<DiscoveryJob>({
     queryKey: ["/api/discover/jobs", expandedJobId],
@@ -270,7 +263,7 @@ export default function Discover() {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      return data.status === "running" ? 3000 : false;
+      return (data.status === "running" || data.status === "pending") ? 3000 : false;
     },
   });
 
@@ -353,231 +346,67 @@ export default function Discover() {
     setCompanyInput("");
   }, []);
 
-  const BATCH_SIZE = 50;
-
-  const processBatch = useCallback(async (
-    batchEntries: CompanyEntry[],
-    controller: AbortController,
-    cumulativeState: { completed: number; failed: number; totalCost: number; total: number },
-  ): Promise<{ completed: number; failed: number; totalCost: number; batchResults: DiscoveryResult[] }> => {
-    const response = await fetch("/api/discover", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ companies: batchEntries, provider: selectedProvider }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => null);
-      throw new Error(errBody?.message || `Discovery request failed (${response.status})`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response stream");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let batchCompleted = 0;
-    let batchFailed = 0;
-    let batchCost = 0;
-    const batchResults: DiscoveryResult[] = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const event: DiscoveryEvent = JSON.parse(line.slice(6));
-
-          switch (event.type) {
-            case "processing":
-              setCurrentCompany(event.company || "");
-              setCurrentPhase("");
-              break;
-            case "phase":
-              setCurrentPhase(event.detail || event.phase || "");
-              break;
-            case "completed": {
-              batchCompleted = event.completed || 0;
-              batchFailed = event.failed || 0;
-              batchCost = event.totalCostUsd || 0;
-              const result: DiscoveryResult = {
-                name: event.company || "",
-                status: "success",
-                assetsFound: event.assetsFound,
-                inputTokens: event.inputTokens,
-                outputTokens: event.outputTokens,
-                costUsd: event.costUsd,
-                normalized: event.normalized,
-                webResearchUsed: event.webResearchUsed,
-              };
-              batchResults.push(result);
-              setResults((prev) => [...prev, result]);
-              setProgress({
-                completed: cumulativeState.completed + batchCompleted,
-                failed: cumulativeState.failed + batchFailed,
-                total: cumulativeState.total,
-              });
-              setRunCost(cumulativeState.totalCost + batchCost);
-              break;
-            }
-            case "error": {
-              batchCompleted = event.completed || 0;
-              batchFailed = event.failed || 0;
-              const errResult: DiscoveryResult = { name: event.company || "", status: "failed", error: event.error };
-              batchResults.push(errResult);
-              setResults((prev) => [...prev, errResult]);
-              setProgress({
-                completed: cumulativeState.completed + batchCompleted,
-                failed: cumulativeState.failed + batchFailed,
-                total: cumulativeState.total,
-              });
-              break;
-            }
-            case "done":
-              batchCompleted = event.completed || 0;
-              batchFailed = event.failed || 0;
-              batchCost = event.totalCostUsd || 0;
-              break;
-            case "fatal_error":
-              throw new Error(event.error || "Fatal error during discovery batch");
-          }
-        } catch (batchErr) {
-          if (batchErr instanceof Error) throw batchErr;
-        }
-      }
-    }
-
-    return {
-      completed: batchCompleted,
-      failed: batchFailed,
-      totalCost: batchCost,
-      batchResults,
-    };
-  }, [selectedProvider]);
-
   const handleDiscover = useCallback(async () => {
     if (entries.length === 0) {
       toast({ title: "No companies entered", description: "Please enter at least one company name.", variant: "destructive" });
       return;
     }
 
-    setIsRunning(true);
-    setResults([]);
-    setProgress({ completed: 0, failed: 0, total: entries.length });
-    setCurrentCompany("");
-    setCurrentPhase("");
-    setIsDone(false);
-    setRunCost(0);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    const batches: CompanyEntry[][] = [];
-    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-      batches.push(entries.slice(i, i + BATCH_SIZE));
-    }
-
-    let cumulativeCompleted = 0;
-    let cumulativeFailed = 0;
-    let cumulativeCost = 0;
-
     try {
-      if (batches.length > 1) {
-        setCurrentPhase(`Processing in ${batches.length} batches of up to ${BATCH_SIZE} companies...`);
+      const response = await fetch("/api/discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companies: entries, provider: selectedProvider }),
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.message || `Request failed (${response.status})`);
       }
 
-      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-        if (controller.signal.aborted) break;
+      const data = await response.json();
+      setActiveJobId(data.jobId);
+      setExpandedJobId(data.jobId);
+      refetchJobs();
 
-        if (batches.length > 1) {
-          setCurrentPhase(`Starting batch ${batchIdx + 1} of ${batches.length}...`);
-        }
-
-        try {
-          const batchResult = await processBatch(
-            batches[batchIdx],
-            controller,
-            { completed: cumulativeCompleted, failed: cumulativeFailed, totalCost: cumulativeCost, total: entries.length },
-          );
-
-          cumulativeCompleted += batchResult.completed;
-          cumulativeFailed += batchResult.failed;
-          cumulativeCost += batchResult.totalCost;
-        } catch (batchErr) {
-          if (controller.signal.aborted) break;
-          if ((batchErr as Error).name === "AbortError") break;
-          const batchSize = batches[batchIdx].length;
-          cumulativeFailed += batchSize;
-          setProgress({
-            completed: cumulativeCompleted,
-            failed: cumulativeFailed,
-            total: entries.length,
-          });
-          console.error(`Batch ${batchIdx + 1} failed:`, batchErr);
-          const batchErrMsg = (batchErr as Error).message || "Unknown error";
-          for (const entry of batches[batchIdx]) {
-            setResults(prev => [...prev, { name: entry.name, status: "failed", error: `Batch error: ${batchErrMsg}` }]);
-          }
-          toast({
-            title: `Batch ${batchIdx + 1} failed`,
-            description: `${batchErrMsg}. Continuing to next batch...`,
-            variant: "destructive",
-          });
-        }
-
-        if (batchIdx < batches.length - 1 && !controller.signal.aborted) {
-          setCurrentPhase(`Batch ${batchIdx + 1} complete. Starting next batch in 2s...`);
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      }
-
-      setCurrentCompany("");
-      setCurrentPhase("");
-      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/discover/jobs"] });
-
-      if (controller.signal.aborted) {
-        setRunCost(cumulativeCost);
-        toast({
-          title: "Discovery cancelled",
-          description: `Stopped after ${cumulativeCompleted + cumulativeFailed} of ${entries.length} companies. ${cumulativeCompleted} succeeded, ${cumulativeFailed} failed. Completed companies are saved.`,
-        });
-      } else {
-        setIsDone(true);
-        setRunCost(cumulativeCost);
-        toast({
-          title: "Discovery complete",
-          description: `Processed ${entries.length} companies: ${cumulativeCompleted} succeeded, ${cumulativeFailed} failed. Cost: ${formatCost(cumulativeCost)}`,
-        });
-      }
+      toast({
+        title: "Discovery started",
+        description: `Job #${data.jobId} queued for ${entries.length} companies. Processing runs on the server — you can close this page and check back later.`,
+      });
     } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        const errMsg = (err as Error).message || "";
-        const isNetworkError = errMsg.includes("Failed to fetch") || errMsg.includes("network") || errMsg.includes("TypeError");
-        toast({
-          title: "Discovery failed",
-          description: isNetworkError
-            ? "Connection lost. The server may have timed out. Check results so far — completed companies are saved."
-            : errMsg || "An error occurred during discovery.",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      setIsRunning(false);
-      abortRef.current = null;
+      toast({
+        title: "Failed to start discovery",
+        description: (err as Error).message || "An error occurred.",
+        variant: "destructive",
+      });
     }
-  }, [entries, selectedProvider, toast, processBatch]);
+  }, [entries, selectedProvider, toast, refetchJobs]);
 
-  const progressPercent = progress.total > 0 ? ((progress.completed + progress.failed) / progress.total) * 100 : 0;
+  const handleCancel = useCallback(async (jobId: number) => {
+    try {
+      await fetch(`/api/discover/jobs/${jobId}/cancel`, { method: "POST" });
+      refetchJobs();
+      toast({ title: "Job cancelled", description: `Job #${jobId} has been cancelled. Completed companies are saved.` });
+    } catch {
+      toast({ title: "Failed to cancel", variant: "destructive" });
+    }
+  }, [refetchJobs, toast]);
+
+  const handleResume = useCallback(async (jobId: number) => {
+    try {
+      const response = await fetch(`/api/discover/jobs/${jobId}/resume`, { method: "POST" });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.message || "Failed to resume");
+      }
+      setActiveJobId(jobId);
+      setExpandedJobId(jobId);
+      refetchJobs();
+      toast({ title: "Job resumed", description: `Job #${jobId} will continue processing remaining companies on the server.` });
+    } catch (err) {
+      toast({ title: "Failed to resume", description: (err as Error).message, variant: "destructive" });
+    }
+  }, [refetchJobs, toast]);
 
   const currentProvider = providers?.find((p) => p.id === selectedProvider);
 
@@ -751,116 +580,116 @@ export default function Discover() {
               <CardTitle className="text-sm font-medium">Discovery Progress</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!isRunning && results.length === 0 && !isDone && (
+              {!activeJob && (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <AlertCircle className="w-8 h-8 text-muted-foreground/40 mb-3" />
                   <p className="text-sm text-muted-foreground">
                     Enter company names and click "Discover Assets" to begin.
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Each company takes about 20-30 seconds (2-pass deep analysis).
+                    Jobs run on the server — you can close this page and check back later.
                   </p>
                 </div>
               )}
 
-              {(isRunning || results.length > 0) && (
-                <>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span>
-                        {progress.completed + progress.failed} of {progress.total} companies
-                      </span>
-                      <div className="flex items-center gap-3">
-                        {runCost > 0 && (
-                          <span className="flex items-center gap-1">
-                            <DollarSign className="w-3 h-3" />
-                            {formatCost(runCost)}
-                          </span>
+              {activeJob && (() => {
+                const processed = activeJob.completedCompanies + activeJob.failedCompanies;
+                const progressPct = activeJob.totalCompanies > 0 ? (processed / activeJob.totalCompanies) * 100 : 0;
+                const activeResults: DiscoveryResult[] = (() => {
+                  try { return activeJob.results ? JSON.parse(activeJob.results) : []; } catch { return []; }
+                })();
+
+                return (
+                  <>
+                    <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 p-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        {isRunning ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
                         )}
-                        <span>{Math.round(progressPercent)}%</span>
+                        <span className="font-medium">
+                          Job #{activeJob.id} — {isRunning ? (activeJob.status === "pending" ? "Queued" : "Running on server") : "Complete"}
+                        </span>
+                        {isRunning && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="ml-auto"
+                            onClick={() => handleCancel(activeJob.id)}
+                            data-testid="button-cancel-active"
+                          >
+                            <X className="w-3 h-3 mr-1" />
+                            Cancel
+                          </Button>
+                        )}
                       </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Processing continues even if you close this page or your device goes to sleep.
+                      </p>
                     </div>
-                    <Progress value={progressPercent} className="h-2" data-testid="progress-bar" />
-                  </div>
 
-                  {currentCompany && (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 text-sm">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-chart-1" />
-                        <span className="text-muted-foreground">Researching:</span>
-                        <span className="font-medium" data-testid="text-current-company">{currentCompany}</span>
-                      </div>
-                      {currentPhase && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground pl-5" data-testid="text-current-phase">
-                          <span>{currentPhase}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                    {results.map((r, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
-                        data-testid={`result-row-${i}`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          {r.status === "success" ? (
-                            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>{processed} of {activeJob.totalCompanies} companies</span>
+                        <div className="flex items-center gap-3">
+                          {(activeJob.totalCostUsd || 0) > 0 && (
+                            <span className="flex items-center gap-1">
+                              <DollarSign className="w-3 h-3" />
+                              {formatCost(activeJob.totalCostUsd || 0)}
+                            </span>
                           )}
-                          <div className="min-w-0">
-                            <span className="text-sm font-medium truncate block">{r.name}</span>
-                            {r.status === "failed" && r.error && (
-                              <span className="text-xs text-red-500 dark:text-red-400 truncate block" data-testid={`text-error-${i}`}>{r.error}</span>
+                          <span>{Math.round(progressPct)}%</span>
+                        </div>
+                      </div>
+                      <Progress value={progressPct} className="h-2" data-testid="progress-bar" />
+                    </div>
+
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                      {activeResults.map((r, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                          data-testid={`result-row-${i}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            {r.status === "success" ? (
+                              <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                            )}
+                            <div className="min-w-0">
+                              <span className="text-sm font-medium truncate block">{r.name}</span>
+                              {r.status === "failed" && r.error && (
+                                <span className="text-xs text-red-500 dark:text-red-400 truncate block">{r.error}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {r.status === "success" && r.webResearchUsed && (
+                              <Badge variant="outline">
+                                <Globe className="w-3 h-3 mr-1" />
+                                Web
+                              </Badge>
+                            )}
+                            {r.status === "success" && r.normalized && (
+                              <Badge variant="outline">Norm</Badge>
+                            )}
+                            {r.status === "success" && r.costUsd !== undefined && (
+                              <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
+                            )}
+                            {r.status === "success" ? (
+                              <Badge variant="secondary">{r.assetsFound} assets</Badge>
+                            ) : (
+                              <Badge variant="destructive">Failed</Badge>
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {r.status === "success" && r.webResearchUsed && (
-                            <Badge variant="outline" data-testid={`badge-web-research-${i}`}>
-                              <Globe className="w-3 h-3 mr-1" />
-                              Web
-                            </Badge>
-                          )}
-                          {r.status === "success" && r.normalized && (
-                            <Badge variant="outline" data-testid={`badge-normalized-${i}`}>Normalized</Badge>
-                          )}
-                          {r.status === "success" && r.costUsd !== undefined && (
-                            <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
-                          )}
-                          {r.status === "success" && r.inputTokens !== undefined && (
-                            <span className="text-xs text-muted-foreground font-mono" data-testid={`text-tokens-${i}`}>
-                              {formatTokens((r.inputTokens || 0) + (r.outputTokens || 0))} tok
-                            </span>
-                          )}
-                          {r.status === "success" ? (
-                            <Badge variant="secondary">{r.assetsFound} assets</Badge>
-                          ) : (
-                            <Badge variant="destructive">Failed</Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {isDone && (
-                    <div className="rounded-md border border-border bg-muted/50 p-3 text-sm">
-                      <p className="font-medium">Discovery Complete</p>
-                      <p className="text-muted-foreground mt-1">
-                        {progress.completed} companies discovered with their assets.{" "}
-                        {progress.failed > 0 && `${progress.failed} failed. `}
-                        Total cost: {formatCost(runCost)}.{" "}
-                        <Link href="/" className="text-chart-1 underline underline-offset-2">
-                          View dashboard
-                        </Link>
-                      </p>
+                      ))}
                     </div>
-                  )}
-                </>
-              )}
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
         </div>
@@ -870,7 +699,7 @@ export default function Discover() {
             <CardHeader className="flex flex-row items-center gap-2">
               <Zap className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-medium">Discovery History</CardTitle>
-              {jobs.some(j => j.status === "running") && (
+              {jobs.some(j => j.status === "running" || j.status === "pending") && (
                 <Badge variant="default" className="ml-auto animate-pulse" data-testid="badge-jobs-active">
                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                   Active
@@ -1054,23 +883,27 @@ export default function Discover() {
                                     </div>
                                   )}
 
-                                  {!displayStatus.isActive && !isRunning && (() => {
+                                  {displayStatus.isActive && (
+                                    <div className="flex items-center justify-end pt-2 border-t border-border">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={(e) => { e.stopPropagation(); handleCancel(job.id); }}
+                                        data-testid={`button-cancel-${job.id}`}
+                                      >
+                                        <X className="w-3.5 h-3.5 mr-1" />
+                                        Cancel Job
+                                      </Button>
+                                    </div>
+                                  )}
+
+                                  {!displayStatus.isActive && (() => {
                                     const failedResults = jobResults.filter((r: DiscoveryResult) => r.status === "failed");
                                     const completedResultNames = new Set(jobResults.map((r: DiscoveryResult) => r.name));
                                     const unprocessed = names.filter(n => !completedResultNames.has(n));
-                                    const retryCompanies = [...failedResults.map((r: DiscoveryResult) => r.name), ...unprocessed];
-                                    if (retryCompanies.length === 0) return null;
+                                    const canResume = (job.status === "interrupted" || job.status === "failed" || job.status === "cancelled") && (unprocessed.length > 0 || failedResults.length > 0);
 
-                                    const handleRetry = () => {
-                                      setCompanyInput(retryCompanies.join("\n"));
-                                      if (job.modelProvider) setSelectedProvider(job.modelProvider);
-                                      setExpandedJobId(null);
-                                      window.scrollTo({ top: 0, behavior: "smooth" });
-                                      toast({
-                                        title: `${retryCompanies.length} companies loaded`,
-                                        description: `${failedResults.length} failed + ${unprocessed.length} unprocessed companies ready to retry.`,
-                                      });
-                                    };
+                                    if (!canResume && failedResults.length === 0 && unprocessed.length === 0) return null;
 
                                     return (
                                       <div className="flex items-center justify-between pt-2 border-t border-border">
@@ -1082,12 +915,11 @@ export default function Discover() {
                                         <Button
                                           size="sm"
                                           variant="outline"
-                                          onClick={(e) => { e.stopPropagation(); handleRetry(); }}
-                                          data-testid={`button-retry-${job.id}`}
+                                          onClick={(e) => { e.stopPropagation(); handleResume(job.id); }}
+                                          data-testid={`button-resume-${job.id}`}
                                         >
-                                          <AlertCircle className="w-3.5 h-3.5 mr-1" />
-                                          {unprocessed.length > 0 ? "Resume & Retry" : "Retry Failed"}
-                                          {" "}({retryCompanies.length})
+                                          <Sparkles className="w-3.5 h-3.5 mr-1" />
+                                          Resume on Server ({unprocessed.length + failedResults.length})
                                         </Button>
                                       </div>
                                     );

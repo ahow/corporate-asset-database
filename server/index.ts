@@ -72,15 +72,11 @@ app.use((req, res, next) => {
   }
 
   try {
-    const { storage } = await import("./storage");
-    const jobs = await storage.getDiscoveryJobs();
-    const staleJobs = jobs.filter(j => j.status === "running");
-    for (const j of staleJobs) {
-      await storage.updateDiscoveryJob(j.id, { status: "interrupted", updatedAt: new Date() });
-      console.log(`Marked stale job ${j.id} as interrupted (was running at startup)`);
-    }
+    const { markStaleJobsInterrupted, startJobRunner } = await import("./job-runner");
+    await markStaleJobsInterrupted();
+    startJobRunner();
   } catch (err) {
-    console.error("Error cleaning stale jobs:", err);
+    console.error("Error initializing job runner:", err);
   }
 
   await registerRoutes(httpServer, app);

@@ -17,6 +17,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 ## Architecture
 - **Frontend:** React + Vite + shadcn/ui + Tailwind CSS + Recharts
 - **Backend:** Express.js with REST API routes
+- **Background Jobs:** Server-side job runner processes discovery jobs independently of client connections (no SSE dependency)
 - **Database:** PostgreSQL via Drizzle ORM
 - **AI Providers:** OpenAI (Replit AI Integrations), DeepSeek, Google Gemini, Claude (Anthropic), MiniMax
 - **Web Research:** Serper API for Google search grounding (optional, falls back gracefully)
@@ -26,6 +27,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `shared/schema.ts` - Database schema (companies, assets with ownership_share, discoveryJobs tables)
 - `server/routes.ts` - API endpoints including discovery SSE endpoint
 - `server/storage.ts` - Database storage layer (DatabaseStorage class)
+- `server/job-runner.ts` - Background job runner that processes discovery jobs server-side (independent of client connections)
 - `server/discovery.ts` - Two-pass AI-powered company asset discovery logic (Pass 1: initial discovery, Pass 2: gap-filling review with deduplication)
 - `server/serper.ts` - Web research module using Serper API for Google search grounding (6-11 sector-aware searches per company, 60 snippet limit)
 - `server/llm-providers.ts` - Multi-LLM provider abstraction (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with cost tracking
@@ -47,9 +49,11 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/assets/export/csv` - CSV export
 - `GET /api/llm-providers` - Available LLM providers with costs
 - `GET /api/serper/status` - Check if Serper web research is available
-- `POST /api/discover` - Start AI discovery (SSE stream, body: { companies: string[] | {name, isin, totalValue?}[], provider: string })
+- `POST /api/discover` - Start AI discovery (returns jobId immediately, processes in background; body: { companies: string[] | {name, isin, totalValue?}[], provider: string })
 - `GET /api/discover/jobs` - Discovery job history with model/cost tracking
-- `GET /api/discover/jobs/:id` - Single discovery job details
+- `GET /api/discover/jobs/:id` - Single discovery job details (poll for progress)
+- `POST /api/discover/jobs/:id/cancel` - Cancel a running/pending job
+- `POST /api/discover/jobs/:id/resume` - Resume an interrupted/failed/cancelled job
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies
 
 ## LLM Providers

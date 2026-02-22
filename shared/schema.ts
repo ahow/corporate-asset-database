@@ -43,6 +43,7 @@ export const discoveryJobs = pgTable("discovery_jobs", {
   completedCompanies: integer("completed_companies").notNull().default(0),
   failedCompanies: integer("failed_companies").notNull().default(0),
   companyNames: text("company_names").notNull(),
+  companyEntries: text("company_entries"),
   results: text("results"),
   totalInputTokens: integer("total_input_tokens").default(0),
   totalOutputTokens: integer("total_output_tokens").default(0),
