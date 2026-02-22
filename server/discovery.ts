@@ -152,7 +152,7 @@ Respond with valid JSON only:
 
 export type ProgressCallback = (phase: string, detail?: string) => void;
 
-export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string, onProgress?: ProgressCallback): Promise<MultiPassDiscoveryResult> {
+export async function discoverCompany(companyName: string, providerId: string = "openai", isin?: string, onProgress?: ProgressCallback, apiKeyOverride?: string): Promise<MultiPassDiscoveryResult> {
   let webContext = "";
   let webResearchUsed = false;
 
@@ -185,7 +185,7 @@ export async function discoverCompany(companyName: string, providerId: string = 
 
   onProgress?.("pass1", `Running Pass 1: Initial asset discovery for ${companyName}...`);
   console.log(`[Discovery v2] Starting Pass 1 for ${companyName} with provider ${providerId}`);
-  const pass1Response = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt);
+  const pass1Response = await callLLM(providerId, DISCOVERY_PROMPT, userPrompt, apiKeyOverride);
 
   const content = pass1Response.content;
   if (!content) {
@@ -218,7 +218,7 @@ export async function discoverCompany(companyName: string, providerId: string = 
   try {
     onProgress?.("pass2", `Running Pass 2: Gap-filling review for ${companyName} (${parsed.assets.length} assets so far)...`);
     console.log(`[Discovery v2] Starting Pass 2 for ${companyName}`);
-    const pass2Response = await callLLM(providerId, SUPPLEMENTARY_PROMPT, pass2UserPrompt);
+    const pass2Response = await callLLM(providerId, SUPPLEMENTARY_PROMPT, pass2UserPrompt, apiKeyOverride);
     passCount = 2;
     totalInputTokens += pass2Response.inputTokens;
     totalOutputTokens += pass2Response.outputTokens;

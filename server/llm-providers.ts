@@ -241,17 +241,30 @@ async function callMiniMax(
   };
 }
 
+export function getParallelApiKeys(providerId: string): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const envVar = `${providerId.toUpperCase()}_API_KEY_${i}`;
+    const key = process.env[envVar];
+    if (isValidApiKey(key)) {
+      keys.push(key!);
+    }
+  }
+  return keys;
+}
+
 export async function callLLM(
   providerId: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  apiKeyOverride?: string
 ): Promise<LLMResponse> {
   const config = PROVIDERS_CONFIG[providerId];
   if (!config) {
     throw new Error(`Unknown provider: ${providerId}. Valid providers: ${Object.keys(PROVIDERS_CONFIG).join(", ")}`);
   }
 
-  const apiKey = resolveApiKey(providerId, config);
+  const apiKey = apiKeyOverride || resolveApiKey(providerId, config);
   if (!apiKey) {
     throw new Error(`API key not configured for ${config.name}. Set ${config.envKey} in secrets.`);
   }
