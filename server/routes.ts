@@ -5,7 +5,8 @@ import { insertAssetSchema, insertCompanySchema } from "@shared/schema";
 import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type MultiPassDiscoveryResult, type ProgressCallback } from "./discovery";
 import { getAvailableProviders } from "./llm-providers";
 import { isSerperAvailable } from "./serper";
-import { startJobRunner, cancelJob, resumeJob, isJobRunnerBusy } from "./job-runner";
+import { startJobRunner, cancelJob, resumeJob, isJobRunnerBusy, getActiveWorkerCount } from "./job-runner";
+import { getParallelApiKeys } from "./llm-providers";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -234,6 +235,16 @@ export async function registerRoutes(
 
   app.get("/api/serper/status", (_req, res) => {
     res.json({ available: isSerperAvailable() });
+  });
+
+  app.get("/api/parallel-status", (_req, res) => {
+    const deepseekKeys = getParallelApiKeys("deepseek");
+    res.json({
+      available: deepseekKeys.length >= 2,
+      workerCount: deepseekKeys.length,
+      activeWorkers: getActiveWorkerCount(),
+      provider: "deepseek",
+    });
   });
 
   app.get("/api/health/providers", async (_req, res) => {

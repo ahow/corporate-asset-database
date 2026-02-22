@@ -58,7 +58,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 
 ## LLM Providers
 - **OpenAI** (gpt-4o-mini) - env: OPENAI_API_KEY (falls back to AI_INTEGRATIONS_OPENAI_API_KEY on Replit)
-- **DeepSeek** (deepseek-chat) - OpenAI-compatible API, env: DEEPSEEK_API_KEY
+- **DeepSeek** (deepseek-chat) - OpenAI-compatible API, env: DEEPSEEK_API_KEY (parallel: DEEPSEEK_API_KEY_1 through DEEPSEEK_API_KEY_10 for up to 10 concurrent workers)
 - **Google Gemini** (gemini-2.0-flash) - OpenAI-compatible API, env: GEMINI_API_KEY
 - **Claude** (claude-sonnet-4) - Anthropic SDK, env: CLAUDE_API_KEY
 - **MiniMax** (MiniMax-M2.5) - Native REST API, env: MINIMAX_API_KEY

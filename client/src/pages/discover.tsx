@@ -230,6 +230,10 @@ export default function Discover() {
     queryKey: ["/api/serper/status"],
   });
 
+  const { data: parallelStatus } = useQuery<{ available: boolean; workerCount: number; activeWorkers: number; provider: string }>({
+    queryKey: ["/api/parallel-status"],
+  });
+
   const { data: jobs, refetch: refetchJobs } = useQuery<DiscoveryJob[]>({
     queryKey: ["/api/discover/jobs"],
     refetchInterval: (query) => {
@@ -494,6 +498,20 @@ export default function Discover() {
                 </span>
               </div>
 
+              {parallelStatus?.available && selectedProvider === "deepseek" && (
+                <div className="flex items-center gap-2 rounded-md border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-2" data-testid="parallel-status">
+                  <Zap className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                  <span className="text-xs text-muted-foreground">Parallel Processing:</span>
+                  <Badge variant="secondary" data-testid="badge-parallel-active">
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    {parallelStatus.workerCount} Workers
+                  </Badge>
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {parallelStatus.workerCount} companies processed simultaneously
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-xs font-medium text-muted-foreground">Companies</label>
@@ -626,6 +644,11 @@ export default function Discover() {
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         Processing continues even if you close this page or your device goes to sleep.
+                        {parallelStatus?.available && activeJob.modelProvider === "deepseek" && (
+                          <span className="ml-1 text-green-600 dark:text-green-400 font-medium">
+                            ({parallelStatus.workerCount} parallel workers)
+                          </span>
+                        )}
                       </p>
                     </div>
 
