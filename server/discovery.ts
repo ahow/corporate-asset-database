@@ -2,6 +2,7 @@ import { storage } from "./storage";
 import type { InsertCompany, InsertAsset } from "@shared/schema";
 import { callLLM, type LLMResponse } from "./llm-providers";
 import { searchCompanyAssets, isSerperAvailable } from "./serper";
+import { jsonrepair } from "jsonrepair";
 
 function repairJSON(raw: string): string {
   let s = raw.trim();
@@ -17,6 +18,12 @@ function repairJSON(raw: string): string {
     }
   }
   try { JSON.parse(s); return s; } catch {}
+  try {
+    const repaired = jsonrepair(s);
+    JSON.parse(repaired);
+    console.log(`[JSON Repair] jsonrepair library fixed malformed JSON (${raw.length} chars)`);
+    return repaired;
+  } catch {}
   const lastCompleteObj = s.lastIndexOf("},");
   if (lastCompleteObj > 0) {
     const truncated = s.slice(0, lastCompleteObj + 1);
