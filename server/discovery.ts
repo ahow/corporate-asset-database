@@ -352,17 +352,22 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany, provi
     providerId === "claude" ? "Claude" :
     providerId === "minimax" ? "MiniMax" : providerId;
 
-  const assetInserts: InsertAsset[] = discovered.assets.map((a) => ({
+  const validAssets = discovered.assets.filter(a => {
+    if (!a.facility_name && !a.asset_type && !a.city) return false;
+    return true;
+  });
+
+  const assetInserts: InsertAsset[] = validAssets.map((a, idx) => ({
     companyName: discovered.name,
     isin: discovered.isin,
-    facilityName: a.facility_name,
-    address: a.address,
-    city: a.city,
-    country: a.country,
+    facilityName: a.facility_name || `${discovered.name} ${a.asset_type || 'Facility'} ${idx + 1}`,
+    address: a.address || '',
+    city: a.city || 'Unknown',
+    country: a.country || 'Unknown',
     latitude: a.latitude,
     longitude: a.longitude,
     coordinateCertainty: a.coordinate_certainty,
-    assetType: a.asset_type,
+    assetType: a.asset_type || 'Facility',
     valueUsd: a.value_usd,
     sizeFactor: a.size_factor,
     geoFactor: a.geo_factor,
