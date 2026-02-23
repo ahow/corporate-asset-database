@@ -45,10 +45,27 @@ export async function registerRoutes(
   app.get("/api/assets/isin/:isin", async (req, res) => {
     try {
       const isinAssets = await storage.getAssetsByIsin(req.params.isin);
+      const company = await storage.getCompanyByIsin(req.params.isin);
       res.json({
         isin: req.params.isin,
-        total_assets: isinAssets.length,
-        assets: isinAssets,
+        company_name: company?.name || (isinAssets.length > 0 ? isinAssets[0].companyName : null),
+        sector: company?.sector || (isinAssets.length > 0 ? isinAssets[0].sector : null),
+        total_estimated_value: isinAssets.reduce((sum, a) => sum + (a.valueUsd || 0), 0),
+        asset_count: isinAssets.length,
+        assets: isinAssets.map(a => ({
+          facility_name: a.facilityName,
+          asset_type: a.assetType,
+          address: a.address,
+          city: a.city,
+          country: a.country,
+          latitude: a.latitude,
+          longitude: a.longitude,
+          coordinate_certainty: a.coordinateCertainty,
+          estimated_value_usd: a.valueUsd,
+          valuation_confidence: a.valuationConfidence,
+          ownership_share: a.ownershipShare,
+          data_source: a.dataSource,
+        })),
       });
     } catch (err) {
       console.error("Error fetching ISIN assets:", err);
