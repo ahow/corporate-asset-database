@@ -78,6 +78,15 @@ export async function ensureTables() {
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='assets' AND column_name='sector') THEN
           ALTER TABLE assets ADD COLUMN sector VARCHAR(100);
         END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='discovery_jobs' AND column_name='supplementary_provider') THEN
+          ALTER TABLE discovery_jobs ADD COLUMN supplementary_provider VARCHAR(50);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='discovery_jobs' AND column_name='company_entries') THEN
+          ALTER TABLE discovery_jobs ADD COLUMN company_entries TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='discovery_jobs' AND column_name='updated_at') THEN
+          ALTER TABLE discovery_jobs ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL;
+        END IF;
       END $$;
     `);
     console.log("Database tables verified/created successfully");
