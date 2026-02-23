@@ -39,6 +39,110 @@ function repairJSON(raw: string): string {
   return raw;
 }
 
+function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function isProximityDuplicate(
+  newAsset: { latitude?: number; longitude?: number; value_usd?: number; asset_type?: string },
+  existing: { latitude?: number; longitude?: number; value_usd?: number; asset_type?: string },
+  maxDistanceKm: number = 5,
+  maxValueRatio: number = 3,
+): boolean {
+  if (!newAsset.latitude || !newAsset.longitude || !existing.latitude || !existing.longitude) {
+    return false;
+  }
+
+  const dist = haversineDistanceKm(newAsset.latitude, newAsset.longitude, existing.latitude, existing.longitude);
+  if (dist > maxDistanceKm) return false;
+
+  const newVal = newAsset.value_usd || 0;
+  const existVal = existing.value_usd || 0;
+  if (newVal > 0 && existVal > 0) {
+    const ratio = Math.max(newVal, existVal) / Math.min(newVal, existVal);
+    if (ratio > maxValueRatio) return false;
+  }
+
+  const newType = (newAsset.asset_type || '').toLowerCase().trim();
+  const existType = (existing.asset_type || '').toLowerCase().trim();
+  if (newType && existType && newType !== existType) {
+    const relatedTypes: Record<string, string[]> = {
+      'headquarters': ['office', 'corporate office'],
+      'office': ['headquarters', 'corporate office', 'regional office'],
+      'manufacturing plant': ['factory', 'production facility', 'assembly plant', 'processing plant'],
+      'factory': ['manufacturing plant', 'production facility', 'assembly plant'],
+      'refinery': ['processing plant', 'smelter'],
+      'mine': ['mining operation', 'open pit mine', 'underground mine'],
+      'warehouse': ['distribution center', 'logistics center', 'storage facility'],
+      'distribution center': ['warehouse', 'logistics center'],
+      'research facility': ['r&d center', 'technology center', 'research center', 'laboratory'],
+      'data center': ['server farm', 'cloud infrastructure'],
+      'solar farm': ['solar power plant', 'renewable energy'],
+      'wind farm': ['wind power plant', 'renewable energy'],
+      'power plant': ['power station', 'energy facility'],
+    };
+    const related = relatedTypes[newType] || [];
+    const relatedExist = relatedTypes[existType] || [];
+    if (!related.includes(existType) && !relatedExist.includes(newType)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function deduplicateAssets(
+  newAssets: DiscoveredAsset[],
+  existingAssets: DiscoveredAsset[],
+  label: string = "",
+): DiscoveredAsset[] {
+  const existingNames = new Set(existingAssets.map(a => (a.facility_name || '').toLowerCase().trim()));
+  const existingLocKeys = new Set(existingAssets.map(a => `${(a.city || '').toLowerCase().trim()}-${(a.asset_type || '').toLowerCase().trim()}`));
+  const unique: DiscoveredAsset[] = [];
+  let nameDups = 0, locDups = 0, proxDups = 0;
+
+  for (const newAsset of newAssets) {
+    const nameLower = (newAsset.facility_name || '').toLowerCase().trim();
+    if (!nameLower) continue;
+
+    if (existingNames.has(nameLower)) {
+      nameDups++;
+      continue;
+    }
+
+    const locKey = `${(newAsset.city || '').toLowerCase().trim()}-${(newAsset.asset_type || '').toLowerCase().trim()}`;
+    if (existingLocKeys.has(locKey)) {
+      locDups++;
+      continue;
+    }
+
+    const proxMatch = [...existingAssets, ...unique].find(existing =>
+      isProximityDuplicate(newAsset, existing)
+    );
+    if (proxMatch) {
+      proxDups++;
+      console.log(`[Dedup${label}] Proximity duplicate: "${newAsset.facility_name}" ~= "${proxMatch.facility_name}" (${haversineDistanceKm(newAsset.latitude, newAsset.longitude, proxMatch.latitude!, proxMatch.longitude!).toFixed(1)}km apart)`);
+      continue;
+    }
+
+    unique.push(newAsset);
+    existingNames.add(nameLower);
+    existingLocKeys.add(locKey);
+  }
+
+  if (nameDups + locDups + proxDups > 0) {
+    console.log(`[Dedup${label}] Filtered ${nameDups + locDups + proxDups} duplicates: ${nameDups} name, ${locDups} location, ${proxDups} proximity`);
+  }
+
+  return unique;
+}
+
 interface DiscoveredAsset {
   facility_name: string;
   address: string;
@@ -237,23 +341,10 @@ export async function discoverCompany(companyName: string, providerId: string = 
       console.log(`[Discovery v2] Pass 2 returned ${additionalAssets.length} additional assets for ${companyName}`);
 
       if (additionalAssets.length > 0) {
-        const existingNames = new Set(parsed.assets.map(a => a.facility_name.toLowerCase().trim()));
-        const existingLocations = new Set(parsed.assets.map(a => `${a.city?.toLowerCase().trim()}-${a.asset_type?.toLowerCase().trim()}`));
-        let added = 0;
-
-        for (const newAsset of additionalAssets) {
-          const nameLower = newAsset.facility_name?.toLowerCase().trim();
-          const locationKey = `${newAsset.city?.toLowerCase().trim()}-${newAsset.asset_type?.toLowerCase().trim()}`;
-
-          if (nameLower && !existingNames.has(nameLower) && !existingLocations.has(locationKey)) {
-            parsed.assets.push(newAsset);
-            existingNames.add(nameLower);
-            existingLocations.add(locationKey);
-            added++;
-          }
-        }
-        console.log(`[Discovery v2] Pass 2 added ${added} unique assets for ${companyName} (${additionalAssets.length - added} duplicates filtered)`);
-        onProgress?.("pass2_done", `Pass 2 added ${added} new assets (total: ${parsed.assets.length})`);
+        const uniqueNew = deduplicateAssets(additionalAssets, parsed.assets, ` Pass2 ${companyName}`);
+        parsed.assets.push(...uniqueNew);
+        console.log(`[Discovery v2] Pass 2 added ${uniqueNew.length} unique assets for ${companyName} (${additionalAssets.length - uniqueNew.length} duplicates filtered)`);
+        onProgress?.("pass2_done", `Pass 2 added ${uniqueNew.length} new assets (total: ${parsed.assets.length})`);
       } else {
         onProgress?.("pass2_done", `Pass 2 found no additional assets`);
       }
@@ -401,20 +492,7 @@ Only return NEW assets not already in the provided list. Do not duplicate any as
   }
 
   const additionalAssets: DiscoveredAsset[] = supplementary.additional_assets || supplementary.assets || [];
-
-  const existingNames = new Set(existingAssets.map(a => (a.facility_name || '').toLowerCase().trim()));
-  const existingLocations = new Set(existingAssets.map(a => `${(a.city || '').toLowerCase().trim()}-${(a.asset_type || '').toLowerCase().trim()}`));
-  const uniqueNew: DiscoveredAsset[] = [];
-
-  for (const newAsset of additionalAssets) {
-    const nameLower = (newAsset.facility_name || '').toLowerCase().trim();
-    const locationKey = `${(newAsset.city || '').toLowerCase().trim()}-${(newAsset.asset_type || '').toLowerCase().trim()}`;
-    if (nameLower && !existingNames.has(nameLower) && !existingLocations.has(locationKey)) {
-      uniqueNew.push(newAsset);
-      existingNames.add(nameLower);
-      existingLocations.add(locationKey);
-    }
-  }
+  const uniqueNew = deduplicateAssets(additionalAssets, existingAssets, ` Supp ${companyName}`);
 
   console.log(`[Discovery v2] Supplementary pass found ${additionalAssets.length} assets, ${uniqueNew.length} unique new for ${companyName}`);
 

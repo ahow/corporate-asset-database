@@ -9,6 +9,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **100% geocoding coverage** on seed data
 - **Multi-LLM AI Discovery** - Toggle between 5 AI providers (OpenAI, DeepSeek, Gemini, Claude, MiniMax) with real-time cost and token tracking
 - **Two-Pass Deep Discovery** - Pass 1 finds initial assets, Pass 2 reviews and fills gaps by category (40+ assets for major mining companies)
+- **Proximity-Based Deduplication** - Three-layer duplicate detection: exact name matching, city+type keys, and geographic proximity (haversine distance <5km + similar value within 3x ratio + related asset types) to catch assets named differently by different LLMs
 - **Web-Enhanced Research** - Optional Serper API integration with sector-aware queries for grounding AI discovery with live Google search data
 - PostgreSQL database for persistence
 - REST API with Express backend
