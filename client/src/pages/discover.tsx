@@ -49,6 +49,7 @@ interface DiscoveryResult {
   name: string;
   status: string;
   assetsFound?: number;
+  supplementaryAssetsFound?: number;
   error?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -61,6 +62,7 @@ interface DiscoveryJob {
   id: number;
   status: string;
   modelProvider: string | null;
+  supplementaryProvider: string | null;
   totalCompanies: number;
   completedCompanies: number;
   failedCompanies: number;
@@ -217,6 +219,7 @@ export default function Discover() {
   const { toast } = useToast();
   const [companyInput, setCompanyInput] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("openai");
+  const [supplementaryProvider, setSupplementaryProvider] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [expandedJobId, setExpandedJobId] = useState<number | null>(null);
@@ -360,7 +363,7 @@ export default function Discover() {
       const response = await fetch("/api/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companies: entries, provider: selectedProvider }),
+        body: JSON.stringify({ companies: entries, provider: selectedProvider, supplementaryProvider: supplementaryProvider || undefined }),
       });
 
       if (!response.ok) {
@@ -384,7 +387,7 @@ export default function Discover() {
         variant: "destructive",
       });
     }
-  }, [entries, selectedProvider, toast, refetchJobs]);
+  }, [entries, selectedProvider, supplementaryProvider, toast, refetchJobs]);
 
   const handleCancel = useCallback(async (jobId: number) => {
     try {
@@ -511,6 +514,42 @@ export default function Discover() {
                   </span>
                 </div>
               )}
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">Supplementary Pass (Multi-LLM)</label>
+                <Select
+                  value={supplementaryProvider || "none"}
+                  onValueChange={(v) => setSupplementaryProvider(v === "none" ? null : v)}
+                  disabled={isRunning}
+                >
+                  <SelectTrigger data-testid="select-supplementary-provider">
+                    <SelectValue placeholder="No supplementary pass" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none" data-testid="option-supplementary-none">
+                      <span className="text-muted-foreground">None — single model only</span>
+                    </SelectItem>
+                    {providers?.filter(p => p.id !== selectedProvider && p.available).map((p) => (
+                      <SelectItem
+                        key={p.id}
+                        value={p.id}
+                        data-testid={`option-supplementary-${p.id}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+                          <span>+ {p.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {supplementaryProvider && (
+                  <p className="text-xs text-muted-foreground">
+                    After the primary {providers?.find(p => p.id === selectedProvider)?.name || selectedProvider} two-pass completes, a supplementary pass using {providers?.find(p => p.id === supplementaryProvider)?.name || supplementaryProvider} will review results and add any missing assets.
+                    {parallelStatus?.providers?.[supplementaryProvider]?.available && ` (${parallelStatus.providers[supplementaryProvider].workerCount} parallel workers)`}
+                  </p>
+                )}
+              </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
@@ -702,7 +741,10 @@ export default function Discover() {
                               <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
                             )}
                             {r.status === "success" ? (
-                              <Badge variant="secondary">{r.assetsFound} assets</Badge>
+                              <Badge variant="secondary">
+                                {r.assetsFound} assets
+                                {r.supplementaryAssetsFound !== undefined && r.supplementaryAssetsFound > 0 && ` (+${r.supplementaryAssetsFound})`}
+                              </Badge>
                             ) : (
                               <Badge variant="destructive">Failed</Badge>
                             )}
@@ -750,6 +792,7 @@ export default function Discover() {
                         try { return JSON.parse(job.companyNames); } catch { return []; }
                       })();
                       const providerName = providers?.find((p) => p.id === job.modelProvider)?.name || job.modelProvider || "OpenAI";
+                      const suppName = job.supplementaryProvider ? (providers?.find((p) => p.id === job.supplementaryProvider)?.name || job.supplementaryProvider) : null;
                       const displayStatus = getJobDisplayStatus(job);
                       const processed = job.completedCompanies + job.failedCompanies;
                       const jobProgress = job.totalCompanies > 0 ? (processed / job.totalCompanies) * 100 : 0;
@@ -779,7 +822,10 @@ export default function Discover() {
                               </div>
                             </td>
                             <td className="px-3 py-2">
-                              <Badge variant="outline" data-testid={`badge-model-${job.id}`}>{providerName}</Badge>
+                              <div className="flex items-center gap-1">
+                                <Badge variant="outline" data-testid={`badge-model-${job.id}`}>{providerName}</Badge>
+                                {suppName && <Badge variant="secondary" className="text-[10px]" data-testid={`badge-supp-${job.id}`}>+ {suppName}</Badge>}
+                              </div>
                             </td>
                             <td className="px-3 py-2">
                               <span className="font-mono text-xs">{job.totalCompanies}</span>
@@ -868,7 +914,10 @@ export default function Discover() {
                                             <span className="text-xs text-muted-foreground font-mono">{formatCost(r.costUsd)}</span>
                                           )}
                                           {r.status === "success" && (
-                                            <Badge variant="secondary" className="text-[10px] h-5">{r.assetsFound} assets</Badge>
+                                            <Badge variant="secondary" className="text-[10px] h-5">
+                                              {r.assetsFound} assets
+                                              {r.supplementaryAssetsFound !== undefined && r.supplementaryAssetsFound > 0 && ` (+${r.supplementaryAssetsFound})`}
+                                            </Badge>
                                           )}
                                         </div>
                                       </div>

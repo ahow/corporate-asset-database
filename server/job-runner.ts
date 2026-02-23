@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, type ProgressCallback } from "./discovery";
+import { discoverCompany, saveDiscoveredCompany, normalizeAssetValues, runSupplementaryPass, type ProgressCallback } from "./discovery";
 import { getParallelApiKeys } from "./llm-providers";
 
 interface CompanyEntry {
@@ -12,6 +12,7 @@ interface JobResult {
   name: string;
   status: string;
   assetsFound?: number;
+  supplementaryAssetsFound?: number;
   error?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -153,10 +154,17 @@ async function runJob(jobId: number) {
   }
 
   const providerId = job.modelProvider || "openai";
+  const supplementaryProviderId = job.supplementaryProvider || null;
   const existingResults: JobResult[] = job.results ? JSON.parse(job.results) : [];
   const processedNames = new Set(existingResults.map(r => r.name.toLowerCase()));
 
-  const remainingEntries = entries.filter(e => {
+  const primaryDone = existingResults.length > 0 && existingResults.every(r => 
+    r.status === "success" || r.status === "failed"
+  );
+  const supplementaryNeeded = supplementaryProviderId && primaryDone;
+  const supplementaryAlreadyRun = existingResults.some(r => r.supplementaryAssetsFound !== undefined);
+
+  const remainingEntries = supplementaryNeeded ? [] : entries.filter(e => {
     const displayName = e.isin ? `${e.name} (${e.isin})` : e.name;
     return !processedNames.has(e.name.toLowerCase()) && !processedNames.has(displayName.toLowerCase());
   });
@@ -173,17 +181,47 @@ async function runJob(jobId: number) {
     updatedAt: new Date(),
   });
 
-  const parallelKeys = getParallelApiKeys(providerId);
-  const useParallel = parallelKeys.length >= 2;
-  const workerCount = useParallel ? parallelKeys.length : 1;
-  activeWorkerCount = workerCount;
+  if (remainingEntries.length > 0) {
+    const parallelKeys = getParallelApiKeys(providerId);
+    const useParallel = parallelKeys.length >= 2;
+    const workerCount = useParallel ? parallelKeys.length : 1;
+    activeWorkerCount = workerCount;
 
-  console.log(`[JobRunner] Starting job ${jobId}: ${remainingEntries.length} remaining of ${entries.length} total, provider: ${providerId}, workers: ${workerCount}${useParallel ? " (parallel)" : " (sequential)"}`);
+    console.log(`[JobRunner] Starting Phase 1 (${providerId}) for job ${jobId}: ${remainingEntries.length} remaining of ${entries.length} total, workers: ${workerCount}${useParallel ? " (parallel)" : " (sequential)"}${supplementaryProviderId ? `, supplementary: ${supplementaryProviderId}` : ""}`);
 
-  if (useParallel) {
-    await runParallel(jobId, remainingEntries, entries.length, providerId, parallelKeys, results, completed, failed, totalInputTokens, totalOutputTokens, totalCostUsd);
-  } else {
-    await runSequential(jobId, remainingEntries, entries.length, providerId, results, completed, failed, totalInputTokens, totalOutputTokens, totalCostUsd);
+    if (useParallel) {
+      await runParallel(jobId, remainingEntries, entries.length, providerId, parallelKeys, results, completed, failed, totalInputTokens, totalOutputTokens, totalCostUsd, !!supplementaryProviderId);
+    } else {
+      await runSequential(jobId, remainingEntries, entries.length, providerId, results, completed, failed, totalInputTokens, totalOutputTokens, totalCostUsd, !!supplementaryProviderId);
+    }
+
+    const updatedJob = await storage.getDiscoveryJob(jobId);
+    if (updatedJob && updatedJob.status === "cancelled") return;
+    results = updatedJob?.results ? JSON.parse(updatedJob.results) : results;
+    completed = updatedJob?.completedCompanies || completed;
+    failed = updatedJob?.failedCompanies || failed;
+    totalInputTokens = updatedJob?.totalInputTokens || totalInputTokens;
+    totalOutputTokens = updatedJob?.totalOutputTokens || totalOutputTokens;
+    totalCostUsd = updatedJob?.totalCostUsd || totalCostUsd;
+  }
+
+  if (supplementaryProviderId && !supplementaryAlreadyRun) {
+    const successResults = results.filter(r => r.status === "success");
+    if (successResults.length > 0) {
+      console.log(`[JobRunner] Starting Phase 2 (supplementary ${supplementaryProviderId}) for job ${jobId}: ${successResults.length} companies`);
+      
+      await runSupplementaryPhase(jobId, entries, supplementaryProviderId, results, totalInputTokens, totalOutputTokens, totalCostUsd);
+      return;
+    }
+  }
+
+  const finalJob = await storage.getDiscoveryJob(jobId);
+  if (finalJob && finalJob.status === "running") {
+    await storage.updateDiscoveryJob(jobId, {
+      status: "complete",
+      updatedAt: new Date(),
+    });
+    console.log(`[JobRunner] Job ${jobId} complete: ${completed} succeeded, ${failed} failed, cost: $${totalCostUsd.toFixed(4)}`);
   }
 }
 
@@ -198,6 +236,7 @@ async function runSequential(
   totalInputTokens: number,
   totalOutputTokens: number,
   totalCostUsd: number,
+  hasSupplementary: boolean = false,
 ) {
   for (const entry of remainingEntries) {
     const currentState = await storage.getDiscoveryJob(jobId);
@@ -229,18 +268,21 @@ async function runSequential(
     });
   }
 
-  await storage.updateDiscoveryJob(jobId, {
-    status: "complete",
-    completedCompanies: completed,
-    failedCompanies: failed,
-    results: JSON.stringify(results),
-    totalInputTokens,
-    totalOutputTokens,
-    totalCostUsd,
-    updatedAt: new Date(),
-  });
-
-  console.log(`[JobRunner] Job ${jobId} complete: ${completed} succeeded, ${failed} failed, cost: $${totalCostUsd.toFixed(4)}`);
+  if (!hasSupplementary) {
+    await storage.updateDiscoveryJob(jobId, {
+      status: "complete",
+      completedCompanies: completed,
+      failedCompanies: failed,
+      results: JSON.stringify(results),
+      totalInputTokens,
+      totalOutputTokens,
+      totalCostUsd,
+      updatedAt: new Date(),
+    });
+    console.log(`[JobRunner] Job ${jobId} complete: ${completed} succeeded, ${failed} failed, cost: $${totalCostUsd.toFixed(4)}`);
+  } else {
+    console.log(`[JobRunner] Phase 1 complete for job ${jobId}: ${completed} succeeded, ${failed} failed. Supplementary phase next.`);
+  }
 }
 
 async function runParallel(
@@ -255,6 +297,7 @@ async function runParallel(
   initialInputTokens: number,
   initialOutputTokens: number,
   initialCostUsd: number,
+  hasSupplementary: boolean = false,
 ) {
   const state = {
     results: [...initialResults],
@@ -344,18 +387,295 @@ async function runParallel(
   await Promise.all(workerPromises);
 
   if (!state.cancelled) {
+    if (!hasSupplementary) {
+      await storage.updateDiscoveryJob(jobId, {
+        status: "complete",
+        completedCompanies: state.completed,
+        failedCompanies: state.failed,
+        results: JSON.stringify(state.results),
+        totalInputTokens: state.totalInputTokens,
+        totalOutputTokens: state.totalOutputTokens,
+        totalCostUsd: state.totalCostUsd,
+        updatedAt: new Date(),
+      });
+      console.log(`[JobRunner] Job ${jobId} complete: ${state.completed} succeeded, ${state.failed} failed, cost: $${state.totalCostUsd.toFixed(4)} (${apiKeys.length} workers)`);
+    } else {
+      await storage.updateDiscoveryJob(jobId, {
+        completedCompanies: state.completed,
+        failedCompanies: state.failed,
+        results: JSON.stringify(state.results),
+        totalInputTokens: state.totalInputTokens,
+        totalOutputTokens: state.totalOutputTokens,
+        totalCostUsd: state.totalCostUsd,
+        updatedAt: new Date(),
+      });
+      console.log(`[JobRunner] Phase 1 complete for job ${jobId}: ${state.completed} succeeded, ${state.failed} failed. Supplementary phase next. (${apiKeys.length} workers)`);
+    }
+  }
+}
+
+async function processOneSupplementary(
+  companyName: string,
+  isin: string,
+  sector: string,
+  existingAssetCount: number,
+  supplementaryProviderId: string,
+  apiKey: string | undefined,
+  workerId: number,
+): Promise<{ additionalAssets: number; inputTokens: number; outputTokens: number; costUsd: number }> {
+  const workerLabel = apiKey ? `S${workerId}` : "S0";
+  console.log(`[JobRunner][${workerLabel}] Supplementary pass for ${companyName} (${existingAssetCount} existing assets)`);
+
+  const assets = await storage.getAssetsByIsin(isin);
+  if (assets.length === 0) {
+    console.log(`[JobRunner][${workerLabel}] No existing assets found for ${companyName} (ISIN: ${isin}), skipping supplementary`);
+    return { additionalAssets: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  }
+
+  const existingDiscoveredAssets = assets.map(a => ({
+    facility_name: a.facilityName,
+    address: a.address || '',
+    city: a.city || '',
+    country: a.country || '',
+    latitude: a.latitude || 0,
+    longitude: a.longitude || 0,
+    coordinate_certainty: a.coordinateCertainty || 50,
+    asset_type: a.assetType || 'Facility',
+    value_usd: a.valueUsd || 0,
+    size_factor: a.sizeFactor || 0.5,
+    geo_factor: a.geoFactor || 1.0,
+    type_weight: a.typeWeight || 1.0,
+    industry_factor: a.industryFactor || 1.0,
+    valuation_confidence: a.valuationConfidence || 50,
+    ownership_share: a.ownershipShare ?? 100,
+  }));
+
+  let lastError = "";
+  const maxRetries = 2;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = attempt * 3000;
+        console.log(`[JobRunner][${workerLabel}] Retrying supplementary for ${companyName} (attempt ${attempt + 1}/${maxRetries + 1})`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      const result = await runSupplementaryPass(
+        companyName, isin, sector, existingDiscoveredAssets,
+        supplementaryProviderId, apiKey
+      );
+
+      if (result.additionalAssets.length > 0) {
+        const providerLabel = supplementaryProviderId === "minimax" ? "MiniMax" :
+          supplementaryProviderId === "deepseek" ? "DeepSeek" :
+          supplementaryProviderId === "gemini" ? "Gemini" :
+          supplementaryProviderId === "claude" ? "Claude" : supplementaryProviderId;
+
+        const validAssets = result.additionalAssets.filter(a => {
+          if (!a.facility_name && !a.asset_type && !a.city) return false;
+          return true;
+        });
+
+        const assetInserts = validAssets.map((a, idx) => ({
+          companyName,
+          isin,
+          facilityName: a.facility_name || `${companyName} ${a.asset_type || 'Facility'} Supp-${idx + 1}`,
+          address: a.address || '',
+          city: a.city || 'Unknown',
+          country: a.country || 'Unknown',
+          latitude: a.latitude,
+          longitude: a.longitude,
+          coordinateCertainty: a.coordinate_certainty,
+          assetType: a.asset_type || 'Facility',
+          valueUsd: a.value_usd,
+          sizeFactor: a.size_factor,
+          geoFactor: a.geo_factor,
+          typeWeight: a.type_weight,
+          industryFactor: a.industry_factor,
+          valuationConfidence: a.valuation_confidence,
+          ownershipShare: a.ownership_share ?? 100,
+          sector,
+          dataSource: `AI Discovery (${providerLabel} Supplementary)`,
+        }));
+
+        if (assetInserts.length > 0) {
+          await storage.bulkCreateAssets(assetInserts as any);
+          const totalAssets = assets.length + assetInserts.length;
+          const totalValue = [...assets, ...assetInserts as any[]].reduce((sum, a) => sum + ((a.valueUsd || a.value_usd || 0) as number), 0);
+          await storage.upsertCompany({ isin, name: companyName, sector, totalAssets: totalValue, assetCount: totalAssets });
+        }
+
+        console.log(`[JobRunner][${workerLabel}] ✓ Supplementary ${companyName}: +${assetInserts.length} new assets ($${result.costUsd.toFixed(4)})`);
+      } else {
+        console.log(`[JobRunner][${workerLabel}] ○ Supplementary ${companyName}: no new assets ($${result.costUsd.toFixed(4)})`);
+      }
+
+      return {
+        additionalAssets: result.additionalAssets.length,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        costUsd: result.costUsd,
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : "Unknown error";
+      if (!isRetryableError(lastError) || attempt === maxRetries) break;
+    }
+  }
+
+  console.log(`[JobRunner][${workerLabel}] ✗ Supplementary ${companyName}: ${lastError}`);
+  return { additionalAssets: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+}
+
+async function runSupplementaryPhase(
+  jobId: number,
+  entries: CompanyEntry[],
+  supplementaryProviderId: string,
+  results: JobResult[],
+  totalInputTokens: number,
+  totalOutputTokens: number,
+  totalCostUsd: number,
+) {
+  const successResults = results.filter(r => r.status === "success" && r.supplementaryAssetsFound === undefined);
+  if (successResults.length === 0) {
+    await storage.updateDiscoveryJob(jobId, { status: "complete", updatedAt: new Date() });
+    return;
+  }
+
+  const parallelKeys = getParallelApiKeys(supplementaryProviderId);
+  const useParallel = parallelKeys.length >= 2;
+  const workerCount = useParallel ? parallelKeys.length : 1;
+  activeWorkerCount = workerCount;
+
+  console.log(`[JobRunner] Phase 2 (supplementary ${supplementaryProviderId}): ${successResults.length} companies, ${workerCount} workers${useParallel ? " (parallel)" : " (sequential)"}`);
+
+  const entryMap = new Map(entries.map(e => [e.name.toLowerCase(), e]));
+  const resultMap = new Map(results.map((r, i) => [r.name.toLowerCase(), i]));
+
+  const companiesToProcess = successResults.map(r => {
+    const entry = entryMap.get(r.name.toLowerCase()) || 
+                  entries.find(e => r.name.toLowerCase().includes(e.name.toLowerCase()));
+    return {
+      name: r.name,
+      isin: entry?.isin || '',
+      sector: '',
+      existingAssetCount: r.assetsFound || 0,
+    };
+  });
+
+  for (const c of companiesToProcess) {
+    if (!c.isin) {
+      const assets = await storage.getAssetsByCompany(c.name);
+      if (assets.length > 0) {
+        c.isin = assets[0].isin || '';
+        c.sector = assets[0].sector || '';
+      }
+    }
+    if (!c.sector) {
+      const companies = await storage.getCompanies();
+      const match = companies.find(co => co.name.toLowerCase() === c.name.toLowerCase());
+      if (match) c.sector = match.sector || '';
+    }
+  }
+
+  if (useParallel) {
+    const state = {
+      queueIndex: 0,
+      savePending: false,
+    };
+
+    const popNext = (): typeof companiesToProcess[0] | null => {
+      if (state.queueIndex >= companiesToProcess.length) return null;
+      const item = companiesToProcess[state.queueIndex++];
+      return item;
+    };
+
+    const worker = async (workerId: number, apiKey: string) => {
+      while (true) {
+        const currentState = await storage.getDiscoveryJob(jobId);
+        if (currentState && currentState.status === "cancelled") return;
+
+        const item = popNext();
+        if (!item) return;
+
+        const suppResult = await processOneSupplementary(
+          item.name, item.isin, item.sector, item.existingAssetCount,
+          supplementaryProviderId, apiKey, workerId
+        );
+
+        const idx = resultMap.get(item.name.toLowerCase());
+        if (idx !== undefined) {
+          results[idx].supplementaryAssetsFound = suppResult.additionalAssets;
+          results[idx].inputTokens = (results[idx].inputTokens || 0) + suppResult.inputTokens;
+          results[idx].outputTokens = (results[idx].outputTokens || 0) + suppResult.outputTokens;
+          results[idx].costUsd = (results[idx].costUsd || 0) + suppResult.costUsd;
+        }
+        totalInputTokens += suppResult.inputTokens;
+        totalOutputTokens += suppResult.outputTokens;
+        totalCostUsd += suppResult.costUsd;
+
+        if (!state.savePending) {
+          state.savePending = true;
+          try {
+            await storage.updateDiscoveryJob(jobId, {
+              results: JSON.stringify(results),
+              totalInputTokens,
+              totalOutputTokens,
+              totalCostUsd,
+              updatedAt: new Date(),
+            });
+          } finally {
+            state.savePending = false;
+          }
+        }
+      }
+    };
+
+    const workerPromises = parallelKeys.map((key, i) => worker(i + 1, key));
+    await Promise.all(workerPromises);
+  } else {
+    for (const item of companiesToProcess) {
+      const currentState = await storage.getDiscoveryJob(jobId);
+      if (currentState && currentState.status === "cancelled") return;
+
+      const suppResult = await processOneSupplementary(
+        item.name, item.isin, item.sector, item.existingAssetCount,
+        supplementaryProviderId, undefined, 0
+      );
+
+      const idx = resultMap.get(item.name.toLowerCase());
+      if (idx !== undefined) {
+        results[idx].supplementaryAssetsFound = suppResult.additionalAssets;
+        results[idx].inputTokens = (results[idx].inputTokens || 0) + suppResult.inputTokens;
+        results[idx].outputTokens = (results[idx].outputTokens || 0) + suppResult.outputTokens;
+        results[idx].costUsd = (results[idx].costUsd || 0) + suppResult.costUsd;
+      }
+      totalInputTokens += suppResult.inputTokens;
+      totalOutputTokens += suppResult.outputTokens;
+      totalCostUsd += suppResult.costUsd;
+
+      await storage.updateDiscoveryJob(jobId, {
+        results: JSON.stringify(results),
+        totalInputTokens,
+        totalOutputTokens,
+        totalCostUsd,
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  const finalState = await storage.getDiscoveryJob(jobId);
+  if (finalState && finalState.status !== "cancelled") {
+    const totalSupp = results.reduce((sum, r) => sum + (r.supplementaryAssetsFound || 0), 0);
     await storage.updateDiscoveryJob(jobId, {
       status: "complete",
-      completedCompanies: state.completed,
-      failedCompanies: state.failed,
-      results: JSON.stringify(state.results),
-      totalInputTokens: state.totalInputTokens,
-      totalOutputTokens: state.totalOutputTokens,
-      totalCostUsd: state.totalCostUsd,
+      results: JSON.stringify(results),
+      totalInputTokens,
+      totalOutputTokens,
+      totalCostUsd,
       updatedAt: new Date(),
     });
-
-    console.log(`[JobRunner] Job ${jobId} complete: ${state.completed} succeeded, ${state.failed} failed, cost: $${state.totalCostUsd.toFixed(4)} (${apiKeys.length} workers)`);
+    console.log(`[JobRunner] Job ${jobId} fully complete (Phase 1 + 2): supplementary added ${totalSupp} assets, total cost: $${totalCostUsd.toFixed(4)}`);
   }
 }
 

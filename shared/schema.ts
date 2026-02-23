@@ -39,6 +39,7 @@ export const discoveryJobs = pgTable("discovery_jobs", {
   id: serial("id").primaryKey(),
   status: varchar("status", { length: 50 }).notNull().default("pending"),
   modelProvider: varchar("model_provider", { length: 50 }).default("openai"),
+  supplementaryProvider: varchar("supplementary_provider", { length: 50 }),
   totalCompanies: integer("total_companies").notNull().default(0),
   completedCompanies: integer("completed_companies").notNull().default(0),
   failedCompanies: integer("failed_companies").notNull().default(0),

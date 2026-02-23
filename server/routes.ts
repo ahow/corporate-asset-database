@@ -282,7 +282,7 @@ export async function registerRoutes(
 
   app.post("/api/discover", async (req, res) => {
     try {
-      const { companies: companyEntries, provider: providerId = "openai" } = req.body;
+      const { companies: companyEntries, provider: providerId = "openai", supplementaryProvider } = req.body;
       if (!companyEntries || !Array.isArray(companyEntries) || companyEntries.length === 0) {
         return res.status(400).json({ message: "Provide an array of companies" });
       }
@@ -305,6 +305,7 @@ export async function registerRoutes(
       const job = await storage.createDiscoveryJob({
         status: "pending",
         modelProvider: providerId,
+        supplementaryProvider: supplementaryProvider || null,
         totalCompanies: entries.length,
         completedCompanies: 0,
         failedCompanies: 0,
@@ -316,7 +317,7 @@ export async function registerRoutes(
         totalCostUsd: 0,
       });
 
-      console.log(`[Discovery] Created background job ${job.id} for ${entries.length} companies with provider ${providerId}`);
+      console.log(`[Discovery] Created background job ${job.id} for ${entries.length} companies with provider ${providerId}${supplementaryProvider ? ` + supplementary: ${supplementaryProvider}` : ""}`);
 
       startJobRunner();
 
