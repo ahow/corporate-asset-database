@@ -79,7 +79,9 @@ curl https://corporate-asset-database-251730b20663.herokuapp.com/api/assets/isin
       "estimated_value_usd": 18200000000,
       "valuation_confidence": 95,
       "ownership_share": 100,
-      "data_source": "AI Discovery (DeepSeek)"
+      "data_source": "AI Discovery (DeepSeek)",
+      "source_document": "2024 10-K Filing",
+      "source_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001318605"
     }
   ]
 }
@@ -504,6 +506,8 @@ The full asset object returned by the `/api/assets` and `/api/assets/company/{na
 | `ownershipShare` | number | Percentage ownership (0–100) |
 | `sector` | string | Industry sector |
 | `dataSource` | string | How the data was obtained |
+| `sourceDocument` | string \| null | Specific source document (e.g., "2024 10-K Filing", "2024 Annual Report") |
+| `sourceUrl` | string \| null | URL to the source document or company investor relations page |
 
 ### Cleaned Asset Object (ISIN Endpoint)
 
@@ -523,6 +527,8 @@ The `/api/assets/isin/{isin}` endpoint returns a simplified asset format without
 | `valuation_confidence` | number | 0–100 confidence in valuation |
 | `ownership_share` | number | Percentage ownership (0–100) |
 | `data_source` | string | Origin of the data |
+| `source_document` | string \| null | Specific source document (e.g., "2024 10-K Filing", "2024 Annual Report") |
+| `source_url` | string \| null | URL to the source document or company investor relations page |
 
 ### Common Asset Types
 

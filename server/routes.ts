@@ -65,6 +65,8 @@ export async function registerRoutes(
           valuation_confidence: a.valuationConfidence,
           ownership_share: a.ownershipShare,
           data_source: a.dataSource,
+          source_document: a.sourceDocument,
+          source_url: a.sourceUrl,
         })),
       });
     } catch (err) {
@@ -116,6 +118,8 @@ export async function registerRoutes(
         "Valuation Confidence",
         "Sector",
         "Data Source",
+        "Source Document",
+        "Source URL",
       ];
 
       const rows = allAssets.map((a) => [
@@ -138,6 +142,8 @@ export async function registerRoutes(
         a.valuationConfidence?.toString() || "",
         a.sector || "",
         a.dataSource || "",
+        a.sourceDocument || "",
+        a.sourceUrl || "",
       ]);
 
       const csvContent = [

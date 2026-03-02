@@ -33,6 +33,8 @@ export const assets = pgTable("assets", {
   ownershipShare: doublePrecision("ownership_share").default(100),
   sector: varchar("sector", { length: 100 }),
   dataSource: text("data_source"),
+  sourceDocument: text("source_document"),
+  sourceUrl: text("source_url"),
 });
 
 export const discoveryJobs = pgTable("discovery_jobs", {

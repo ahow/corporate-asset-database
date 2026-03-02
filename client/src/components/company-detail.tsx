@@ -231,6 +231,18 @@ function AssetDetailCard({ asset }: { asset: Asset }) {
               <span>{asset.dataSource}</span>
             </div>
           )}
+          {asset.sourceDocument && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Source Document:</span>{" "}
+              <span>{asset.sourceDocument}</span>
+            </div>
+          )}
+          {asset.sourceUrl && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Source URL:</span>{" "}
+              <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 underline break-all" data-testid={`link-source-url-${asset.id}`}>{asset.sourceUrl}</a>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

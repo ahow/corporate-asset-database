@@ -159,6 +159,8 @@ interface DiscoveredAsset {
   industry_factor: number;
   valuation_confidence: number;
   ownership_share: number;
+  source_document?: string;
+  source_url?: string;
 }
 
 interface DiscoveredCompany {
@@ -197,7 +199,9 @@ const ASSET_FIELDS_DESCRIPTION = `For each asset, provide:
 - type_weight: 0.5-1.5 asset type importance weight
 - industry_factor: 0.5-1.5 industry-specific multiplier
 - valuation_confidence: 1-100 confidence in valuation estimate
-- ownership_share: Percentage of the asset owned by the company (0-100). Use 100 for wholly-owned assets. For joint ventures, partnerships, or partial ownership, use the company's actual ownership percentage. The value_usd should reflect the TOTAL asset value (not the company's share — the ownership_share field captures the percentage).`;
+- ownership_share: Percentage of the asset owned by the company (0-100). Use 100 for wholly-owned assets. For joint ventures, partnerships, or partial ownership, use the company's actual ownership percentage. The value_usd should reflect the TOTAL asset value (not the company's share — the ownership_share field captures the percentage).
+- source_document: The specific document or filing where this asset information can be verified (e.g., "2024 Annual Report", "2024 10-K Filing", "Q3 2024 Earnings Call", "Company Website - Locations Page", "SEC Filing 10-K 2023", "Environmental Impact Assessment 2024", "Investor Presentation Q2 2024"). Be as specific as possible.
+- source_url: A URL where the source document or information about this asset can be found. Use real, verifiable URLs such as SEC EDGAR filings, company investor relations pages, annual report PDFs, or regulatory filings. If no specific URL is known, use the company's investor relations page URL. Do NOT fabricate URLs.`;
 
 const DISCOVERY_PROMPT = `You are an expert corporate analyst specializing in comprehensive physical asset discovery for global corporations. Given a company name, research and identify ALL significant physical assets they own or operate worldwide. Be as thorough and complete as possible — do not limit yourself to a small number. Include every major facility you know about.
 
@@ -550,6 +554,8 @@ export async function saveDiscoveredCompany(discovered: DiscoveredCompany, provi
     ownershipShare: a.ownership_share ?? 100,
     sector: discovered.sector,
     dataSource: `AI Discovery (${providerLabel})`,
+    sourceDocument: a.source_document || null,
+    sourceUrl: a.source_url || null,
   }));
 
   await storage.bulkCreateAssets(assetInserts);

@@ -22,7 +22,8 @@ A production-ready system that discovers, geolocates, and values physical assets
 - **Database:** PostgreSQL via Drizzle ORM
 - **AI Providers:** OpenAI (Replit AI Integrations), DeepSeek, Google Gemini, Claude (Anthropic), MiniMax
 - **Web Research:** Serper API for Google search grounding (optional, falls back gracefully)
-- **Schema:** `shared/schema.ts` defines companies, assets, discovery_jobs tables
+- **Source Tracking:** Each asset includes `sourceDocument` (e.g., "2024 10-K Filing") and `sourceUrl` (link to the filing/report) for verification
+- **Schema:** `shared/schema.ts` defines companies, assets (with source_document, source_url columns), discovery_jobs tables
 
 ## Key Files
 - `shared/schema.ts` - Database schema (companies, assets with ownership_share, discoveryJobs tables)
