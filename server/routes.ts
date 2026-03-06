@@ -239,6 +239,66 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/companies/update-values", async (req, res) => {
+    try {
+      const { entries } = req.body;
+      if (!entries || !Array.isArray(entries) || entries.length === 0) {
+        return res.status(400).json({ message: "Provide an array of { isin, totalValue } entries" });
+      }
+
+      const allCompanies = await storage.getCompanies();
+      const companyByIsin = new Map(allCompanies.map(c => [c.isin, c]));
+
+      let updated = 0;
+      let skipped = 0;
+      let errors = 0;
+      const results: Array<{ isin: string; company: string; oldValue: number; newValue: number; assetsScaled: number }> = [];
+
+      for (const entry of entries) {
+        const isin = typeof entry.isin === "string" ? entry.isin.trim() : "";
+        const totalValue = typeof entry.totalValue === "number" && isFinite(entry.totalValue) ? entry.totalValue : NaN;
+        if (!isin || isNaN(totalValue) || totalValue <= 0) { skipped++; continue; }
+
+        const company = companyByIsin.get(isin);
+        if (!company) { skipped++; continue; }
+
+        try {
+          const companyAssets = await storage.getAssetsByIsin(isin);
+          const currentSum = companyAssets.reduce((sum, a) => sum + (a.valueUsd || 0), 0);
+          const oldValue = company.totalAssets || 0;
+
+          await storage.updateCompany(company.id, { totalAssets: totalValue, assetCount: companyAssets.length });
+
+          if (currentSum > 0 && companyAssets.length > 0) {
+            const scaleFactor = totalValue / currentSum;
+            for (const asset of companyAssets) {
+              const newVal = Math.round((asset.valueUsd || 0) * scaleFactor);
+              await storage.updateAsset(asset.id, { valueUsd: newVal });
+            }
+          }
+
+          results.push({
+            isin,
+            company: company.name,
+            oldValue,
+            newValue: totalValue,
+            assetsScaled: companyAssets.length,
+          });
+          updated++;
+        } catch (err) {
+          console.error(`Error updating values for ${isin}:`, err);
+          errors++;
+        }
+      }
+
+      console.log(`[Update Values] Updated ${updated} companies, skipped ${skipped}, errors ${errors}`);
+      res.json({ updated, skipped, errors, total: entries.length, results });
+    } catch (err) {
+      console.error("Error in bulk value update:", err);
+      res.status(500).json({ message: "Failed to update values" });
+    }
+  });
+
   app.delete("/api/companies/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { StatsCards } from "@/components/stats-cards";
 import { CompanySelector } from "@/components/company-selector";
 import { AssetTable } from "@/components/asset-table";
@@ -10,17 +10,50 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Download, Search, Database, BarChart3, Building2, Table2, Sparkles, BookOpen } from "lucide-react";
+import { Download, Search, Database, BarChart3, Building2, Table2, Sparkles, BookOpen, Upload, DollarSign, Loader2, CheckCircle2, X } from "lucide-react";
 import type { Asset, Company } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
+import { queryClient } from "@/lib/queryClient";
+
+interface UpdateResult {
+  isin: string;
+  company: string;
+  oldValue: number;
+  newValue: number;
+  assetsScaled: number;
+}
+
+function parseCSVLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"') { inQuotes = !inQuotes; continue; }
+    if (line[i] === "," && !inQuotes) { fields.push(current); current = ""; continue; }
+    current += line[i];
+  }
+  fields.push(current);
+  return fields;
+}
+
+function formatCurrency(value: number): string {
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(0)}M`;
+  return `$${value.toLocaleString()}`;
+}
 
 export default function Dashboard() {
   const { toast } = useToast();
   const [selectedCompany, setSelectedCompany] = useState("");
   const [globalSearch, setGlobalSearch] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+  const [showUpdateValues, setShowUpdateValues] = useState(false);
+  const [updateRunning, setUpdateRunning] = useState(false);
+  const [updateResults, setUpdateResults] = useState<{ updated: number; skipped: number; errors: number; results: UpdateResult[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: assetsResponse, isLoading: assetsLoading } = useQuery<{
     total_assets: number;
@@ -97,6 +130,86 @@ export default function Dashboard() {
     }
   };
 
+  const handleUpdateValuesFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      const lines = text.split("\n").filter((l) => l.trim());
+      if (lines.length < 2) {
+        toast({ title: "Empty file", description: "The CSV file contains no data rows.", variant: "destructive" });
+        return;
+      }
+
+      const header = parseCSVLine(lines[0]);
+      const isinIdx = header.findIndex((h) => h.trim().toUpperCase() === "ISIN");
+      const tvIdx = header.findIndex((h) => h.trim().toUpperCase() === "TOTALVALUE");
+
+      if (isinIdx < 0 || tvIdx < 0) {
+        toast({
+          title: "Invalid CSV format",
+          description: "CSV must have 'ISIN' and 'TotalValue' columns in the header row.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const entries: Array<{ isin: string; totalValue: number }> = [];
+      for (const line of lines.slice(1)) {
+        const fields = parseCSVLine(line);
+        const isin = (fields[isinIdx] || "").trim();
+        const rawVal = (fields[tvIdx] || "").replace(/,/g, "").trim();
+        const totalValue = parseFloat(rawVal);
+        if (isin && !isNaN(totalValue) && totalValue > 0) {
+          entries.push({ isin, totalValue });
+        }
+      }
+
+      if (entries.length === 0) {
+        toast({ title: "No valid entries", description: "No rows with valid ISIN and TotalValue found.", variant: "destructive" });
+        return;
+      }
+
+      setUpdateRunning(true);
+      setUpdateResults(null);
+
+      try {
+        const res = await fetch("/api/companies/update-values", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.message || "Update failed");
+        }
+
+        const result = await res.json();
+        setUpdateResults(result);
+
+        queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+
+        toast({
+          title: "Values updated",
+          description: `Updated ${result.updated} companies (${result.skipped} skipped, ${result.errors} errors).`,
+        });
+      } catch (err: any) {
+        toast({ title: "Update failed", description: err.message, variant: "destructive" });
+      } finally {
+        setUpdateRunning(false);
+      }
+    };
+    reader.readAsText(file);
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -107,6 +220,15 @@ export default function Dashboard() {
               <h1 className="text-base font-semibold tracking-tight">Corporate Asset Database</h1>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setShowUpdateValues(!showUpdateValues); setUpdateResults(null); }}
+                data-testid="button-update-values"
+              >
+                <DollarSign className="w-3.5 h-3.5 mr-1.5" />
+                Update Values
+              </Button>
               <Link href="/discover">
                 <Button variant="outline" size="sm" data-testid="button-discover">
                   <Sparkles className="w-3.5 h-3.5 mr-1.5" />
@@ -130,6 +252,97 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {showUpdateValues && (
+          <Card data-testid="panel-update-values">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-chart-1" />
+                  <h3 className="text-sm font-semibold">Update Company Total Values</h3>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => { setShowUpdateValues(false); setUpdateResults(null); }} data-testid="button-close-update-values">
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Upload a CSV file with <span className="font-mono">ISIN</span> and <span className="font-mono">TotalValue</span> columns.
+                This will update the total asset value for each matching company and proportionally rescale all individual asset values.
+                No assets will be re-extracted — only values are updated.
+              </p>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,.txt"
+                  className="hidden"
+                  onChange={handleUpdateValuesFile}
+                  data-testid="input-update-values-file"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={updateRunning}
+                  data-testid="button-upload-values"
+                >
+                  {updateRunning ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5 mr-1.5" />
+                      Upload CSV
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {updateResults && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className="flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      <strong>{updateResults.updated}</strong> updated
+                    </span>
+                    <span className="text-muted-foreground">{updateResults.skipped} skipped (no match)</span>
+                    {updateResults.errors > 0 && (
+                      <span className="text-red-500">{updateResults.errors} errors</span>
+                    )}
+                  </div>
+
+                  {updateResults.results.length > 0 && (
+                    <div className="rounded-md border border-border overflow-hidden max-h-[300px] overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/50 text-left sticky top-0">
+                            <th className="px-3 py-1.5 font-medium">Company</th>
+                            <th className="px-3 py-1.5 font-medium">ISIN</th>
+                            <th className="px-3 py-1.5 font-medium text-right">Previous Value</th>
+                            <th className="px-3 py-1.5 font-medium text-right">New Value</th>
+                            <th className="px-3 py-1.5 font-medium text-right">Assets Scaled</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {updateResults.results.map((r) => (
+                            <tr key={r.isin} data-testid={`row-update-result-${r.isin}`}>
+                              <td className="px-3 py-1.5">{r.company}</td>
+                              <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.isin}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatCurrency(r.oldValue)}</td>
+                              <td className="px-3 py-1.5 text-right font-mono tabular-nums">{formatCurrency(r.newValue)}</td>
+                              <td className="px-3 py-1.5 text-right">{r.assetsScaled}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <StatsCards stats={stats} isLoading={assetsLoading} />
 
         <div className="flex items-center gap-3 flex-wrap">

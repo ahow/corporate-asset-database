@@ -476,6 +476,59 @@ These endpoints allow creating, updating, and deleting assets and companies.
 | `PUT /api/companies/{id}` | Update an existing company | Partial updates supported |
 | `DELETE /api/companies/{id}` | Delete a company | Returns `{ "message": "Company deleted" }` |
 
+### Bulk Update Company Values
+
+Updates company total asset values and proportionally rescales all individual asset values. Does not re-run asset discovery.
+
+**Endpoint:** `POST /api/companies/update-values`
+
+**Request Body (JSON):**
+
+```json
+{
+  "entries": [
+    { "isin": "US88160R1014", "totalValue": 115546000000 },
+    { "isin": "US0231351067", "totalValue": 611697000000 }
+  ]
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `entries` | array | Yes | Array of ISIN + TotalValue pairs |
+| `entries[].isin` | string | Yes | 12-character ISIN code |
+| `entries[].totalValue` | number | Yes | New total asset value in USD (must be > 0) |
+
+**How It Works:**
+1. For each entry, finds the company matching the ISIN in the database.
+2. Updates the company's `totalAssets` field to the new value.
+3. Calculates a scale factor (newTotal / currentAssetSum) and multiplies every individual asset value by that factor.
+4. The relative distribution of value across a company's assets is preserved — only the absolute values change.
+
+**Example Response:**
+
+```json
+{
+  "updated": 2,
+  "skipped": 0,
+  "errors": 0,
+  "total": 2,
+  "results": [
+    {
+      "isin": "US88160R1014",
+      "company": "Tesla, Inc.",
+      "oldValue": 57015000000,
+      "newValue": 115546000000,
+      "assetsScaled": 13
+    }
+  ]
+}
+```
+
+Entries are skipped if the ISIN is not found in the database or if the totalValue is invalid.
+
 ---
 
 ## Data Dictionary

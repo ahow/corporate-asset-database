@@ -56,6 +56,7 @@ A production-ready system that discovers, geolocates, and values physical assets
 - `GET /api/discover/jobs/:id` - Single discovery job details (poll for progress)
 - `POST /api/discover/jobs/:id/cancel` - Cancel a running/pending job
 - `POST /api/discover/jobs/:id/resume` - Resume an interrupted/failed/cancelled job
+- `POST /api/companies/update-values` - Bulk update company TotalValue and proportionally rescale asset values (body: { entries: [{isin, totalValue}] })
 - CRUD: POST/PUT/DELETE for /api/assets and /api/companies
 
 ## LLM Providers
