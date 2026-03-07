@@ -267,52 +267,57 @@ export async function registerRoutes(
       const results: Array<{ isin: string; company: string; oldValue: number; newValue: number; assetsScaled: number }> = [];
 
       try {
+        await client.query('BEGIN');
+
+        const isinList = Array.from(validEntries.keys());
         const companyRows = await client.query(
           `SELECT id, isin, name, total_assets, asset_count FROM companies WHERE isin = ANY($1)`,
-          [Array.from(validEntries.keys())]
+          [isinList]
         );
 
         const notFound = validEntries.size - companyRows.rows.length;
         skipped += notFound;
 
+        const matchedIsins = companyRows.rows.map((c: any) => c.isin);
+        const assetSums = await client.query(
+          `SELECT isin, COALESCE(SUM(value_usd), 0) as total_sum, COUNT(*) as cnt FROM assets WHERE isin = ANY($1) GROUP BY isin`,
+          [matchedIsins]
+        );
+        const sumByIsin = new Map(assetSums.rows.map((r: any) => [r.isin, { sum: parseFloat(r.total_sum) || 0, count: parseInt(r.cnt) || 0 }]));
+
         for (const company of companyRows.rows) {
           const newTotal = validEntries.get(company.isin);
           if (!newTotal) continue;
 
-          try {
-            const sumResult = await client.query(
-              `SELECT COALESCE(SUM(value_usd), 0) as total_sum, COUNT(*) as cnt FROM assets WHERE isin = $1`,
-              [company.isin]
-            );
-            const currentSum = parseFloat(sumResult.rows[0].total_sum) || 0;
-            const assetCount = parseInt(sumResult.rows[0].cnt) || 0;
+          const assetInfo = sumByIsin.get(company.isin) || { sum: 0, count: 0 };
 
+          await client.query(
+            `UPDATE companies SET total_assets = $1, asset_count = $2 WHERE id = $3`,
+            [newTotal, assetInfo.count, company.id]
+          );
+
+          if (assetInfo.sum > 0 && assetInfo.count > 0) {
+            const scaleFactor = newTotal / assetInfo.sum;
             await client.query(
-              `UPDATE companies SET total_assets = $1, asset_count = $2 WHERE id = $3`,
-              [newTotal, assetCount, company.id]
+              `UPDATE assets SET value_usd = ROUND(value_usd * $1) WHERE isin = $2 AND value_usd IS NOT NULL`,
+              [scaleFactor, company.isin]
             );
-
-            if (currentSum > 0 && assetCount > 0) {
-              const scaleFactor = newTotal / currentSum;
-              await client.query(
-                `UPDATE assets SET value_usd = ROUND(value_usd * $1) WHERE isin = $2 AND value_usd IS NOT NULL`,
-                [scaleFactor, company.isin]
-              );
-            }
-
-            results.push({
-              isin: company.isin,
-              company: company.name,
-              oldValue: company.total_assets || 0,
-              newValue: newTotal,
-              assetsScaled: assetCount,
-            });
-            updated++;
-          } catch (err) {
-            console.error(`Error updating values for ${company.isin}:`, err);
-            errors++;
           }
+
+          results.push({
+            isin: company.isin,
+            company: company.name,
+            oldValue: company.total_assets || 0,
+            newValue: newTotal,
+            assetsScaled: assetInfo.count,
+          });
+          updated++;
         }
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
       } finally {
         client.release();
       }
