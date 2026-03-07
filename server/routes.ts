@@ -246,49 +246,75 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Provide an array of { isin, totalValue } entries" });
       }
 
-      const allCompanies = await storage.getCompanies();
-      const companyByIsin = new Map(allCompanies.map(c => [c.isin, c]));
-
-      let updated = 0;
+      const validEntries = new Map<string, number>();
       let skipped = 0;
-      let errors = 0;
-      const results: Array<{ isin: string; company: string; oldValue: number; newValue: number; assetsScaled: number }> = [];
-
       for (const entry of entries) {
         const isin = typeof entry.isin === "string" ? entry.isin.trim() : "";
         const totalValue = typeof entry.totalValue === "number" && isFinite(entry.totalValue) ? entry.totalValue : NaN;
         if (!isin || isNaN(totalValue) || totalValue <= 0) { skipped++; continue; }
+        validEntries.set(isin, totalValue);
+      }
 
-        const company = companyByIsin.get(isin);
-        if (!company) { skipped++; continue; }
+      if (validEntries.size === 0) {
+        return res.json({ updated: 0, skipped, errors: 0, total: entries.length, results: [] });
+      }
 
-        try {
-          const companyAssets = await storage.getAssetsByIsin(isin);
-          const currentSum = companyAssets.reduce((sum, a) => sum + (a.valueUsd || 0), 0);
-          const oldValue = company.totalAssets || 0;
+      const { pool } = await import("./db");
+      const client = await pool.connect();
 
-          await storage.updateCompany(company.id, { totalAssets: totalValue, assetCount: companyAssets.length });
+      let updated = 0;
+      let errors = 0;
+      const results: Array<{ isin: string; company: string; oldValue: number; newValue: number; assetsScaled: number }> = [];
 
-          if (currentSum > 0 && companyAssets.length > 0) {
-            const scaleFactor = totalValue / currentSum;
-            for (const asset of companyAssets) {
-              const newVal = Math.round((asset.valueUsd || 0) * scaleFactor);
-              await storage.updateAsset(asset.id, { valueUsd: newVal });
+      try {
+        const companyRows = await client.query(
+          `SELECT id, isin, name, total_assets, asset_count FROM companies WHERE isin = ANY($1)`,
+          [Array.from(validEntries.keys())]
+        );
+
+        const notFound = validEntries.size - companyRows.rows.length;
+        skipped += notFound;
+
+        for (const company of companyRows.rows) {
+          const newTotal = validEntries.get(company.isin);
+          if (!newTotal) continue;
+
+          try {
+            const sumResult = await client.query(
+              `SELECT COALESCE(SUM(value_usd), 0) as total_sum, COUNT(*) as cnt FROM assets WHERE isin = $1`,
+              [company.isin]
+            );
+            const currentSum = parseFloat(sumResult.rows[0].total_sum) || 0;
+            const assetCount = parseInt(sumResult.rows[0].cnt) || 0;
+
+            await client.query(
+              `UPDATE companies SET total_assets = $1, asset_count = $2 WHERE id = $3`,
+              [newTotal, assetCount, company.id]
+            );
+
+            if (currentSum > 0 && assetCount > 0) {
+              const scaleFactor = newTotal / currentSum;
+              await client.query(
+                `UPDATE assets SET value_usd = ROUND(value_usd * $1) WHERE isin = $2 AND value_usd IS NOT NULL`,
+                [scaleFactor, company.isin]
+              );
             }
-          }
 
-          results.push({
-            isin,
-            company: company.name,
-            oldValue,
-            newValue: totalValue,
-            assetsScaled: companyAssets.length,
-          });
-          updated++;
-        } catch (err) {
-          console.error(`Error updating values for ${isin}:`, err);
-          errors++;
+            results.push({
+              isin: company.isin,
+              company: company.name,
+              oldValue: company.total_assets || 0,
+              newValue: newTotal,
+              assetsScaled: assetCount,
+            });
+            updated++;
+          } catch (err) {
+            console.error(`Error updating values for ${company.isin}:`, err);
+            errors++;
+          }
         }
+      } finally {
+        client.release();
       }
 
       console.log(`[Update Values] Updated ${updated} companies, skipped ${skipped}, errors ${errors}`);
