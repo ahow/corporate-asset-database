@@ -270,6 +270,8 @@ export async function registerRoutes(
         await client.query('BEGIN');
 
         const isinList = Array.from(validEntries.keys());
+        const totalValues = isinList.map(isin => validEntries.get(isin)!);
+
         const companyRows = await client.query(
           `SELECT id, isin, name, total_assets, asset_count FROM companies WHERE isin = ANY($1)`,
           [isinList]
@@ -278,40 +280,65 @@ export async function registerRoutes(
         const notFound = validEntries.size - companyRows.rows.length;
         skipped += notFound;
 
-        const matchedIsins = companyRows.rows.map((c: any) => c.isin);
-        const assetSums = await client.query(
-          `SELECT isin, COALESCE(SUM(value_usd), 0) as total_sum, COUNT(*) as cnt FROM assets WHERE isin = ANY($1) GROUP BY isin`,
-          [matchedIsins]
-        );
-        const sumByIsin = new Map(assetSums.rows.map((r: any) => [r.isin, { sum: parseFloat(r.total_sum) || 0, count: parseInt(r.cnt) || 0 }]));
+        if (companyRows.rows.length > 0) {
+          const matchedIsins = companyRows.rows.map((c: any) => c.isin);
 
-        for (const company of companyRows.rows) {
-          const newTotal = validEntries.get(company.isin);
-          if (!newTotal) continue;
-
-          const assetInfo = sumByIsin.get(company.isin) || { sum: 0, count: 0 };
-
-          await client.query(
-            `UPDATE companies SET total_assets = $1, asset_count = $2 WHERE id = $3`,
-            [newTotal, assetInfo.count, company.id]
+          const assetSums = await client.query(
+            `SELECT isin, COALESCE(SUM(value_usd), 0) as total_sum, COUNT(*) as cnt FROM assets WHERE isin = ANY($1) GROUP BY isin`,
+            [matchedIsins]
           );
+          const sumByIsin = new Map(assetSums.rows.map((r: any) => [r.isin, { sum: parseFloat(r.total_sum) || 0, count: parseInt(r.cnt) || 0 }]));
 
-          if (assetInfo.sum > 0 && assetInfo.count > 0) {
-            const scaleFactor = newTotal / assetInfo.sum;
+          const updateIsins: string[] = [];
+          const updateTotals: number[] = [];
+          const updateCounts: number[] = [];
+          const scaleIsins: string[] = [];
+          const scaleFactors: number[] = [];
+
+          for (const company of companyRows.rows) {
+            const newTotal = validEntries.get(company.isin);
+            if (!newTotal) continue;
+
+            const assetInfo = sumByIsin.get(company.isin) || { sum: 0, count: 0 };
+
+            updateIsins.push(company.isin);
+            updateTotals.push(newTotal);
+            updateCounts.push(assetInfo.count);
+
+            if (assetInfo.sum > 0 && assetInfo.count > 0) {
+              scaleIsins.push(company.isin);
+              scaleFactors.push(newTotal / assetInfo.sum);
+            }
+
+            results.push({
+              isin: company.isin,
+              company: company.name,
+              oldValue: company.total_assets || 0,
+              newValue: newTotal,
+              assetsScaled: assetInfo.count,
+            });
+            updated++;
+          }
+
+          if (updateIsins.length > 0) {
             await client.query(
-              `UPDATE assets SET value_usd = ROUND(value_usd * $1) WHERE isin = $2 AND value_usd IS NOT NULL`,
-              [scaleFactor, company.isin]
+              `UPDATE companies SET
+                total_assets = bulk.new_total,
+                asset_count = bulk.new_count
+              FROM (SELECT unnest($1::varchar[]) as isin, unnest($2::float8[]) as new_total, unnest($3::int[]) as new_count) bulk
+              WHERE companies.isin = bulk.isin`,
+              [updateIsins, updateTotals, updateCounts]
             );
           }
 
-          results.push({
-            isin: company.isin,
-            company: company.name,
-            oldValue: company.total_assets || 0,
-            newValue: newTotal,
-            assetsScaled: assetInfo.count,
-          });
-          updated++;
+          if (scaleIsins.length > 0) {
+            await client.query(
+              `UPDATE assets SET value_usd = ROUND(value_usd * bulk.scale_factor)
+              FROM (SELECT unnest($1::varchar[]) as isin, unnest($2::float8[]) as scale_factor) bulk
+              WHERE assets.isin = bulk.isin AND assets.value_usd IS NOT NULL`,
+              [scaleIsins, scaleFactors]
+            );
+          }
         }
 
         await client.query('COMMIT');
